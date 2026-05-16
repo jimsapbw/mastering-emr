@@ -8,3 +8,5 @@ data.zip
 .DS_Store
 archive
 airflow
+__pycache__/
+*.py[cod]
