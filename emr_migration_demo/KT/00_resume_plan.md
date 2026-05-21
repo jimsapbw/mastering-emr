@@ -130,6 +130,69 @@ Reference:
 emr_migration_demo/KT/04_dataset_contract_and_validation.md
 ```
 
+### 5. GitHub Backup
+
+Backed up the demo scaffold to:
+
+```text
+https://github.com/jimsapbw/mastering-emr/tree/main/emr_migration_demo
+```
+
+Commit:
+
+```text
+eed4b8c Add EMR migration demo scaffold
+```
+
+Reference:
+
+```text
+emr_migration_demo/KT/05_git_backup.md
+```
+
+### 6. Scala Maven Spark Project
+
+Created the Scala/Maven project:
+
+```text
+emr_migration_demo/spark/pom.xml
+emr_migration_demo/spark/src/main/scala/com/demo/emr/RawDataCountApp.scala
+```
+
+Verified:
+
+```text
+Maven build: PASS
+RawDataCountApp S3 read/count run: PASS
+```
+
+Reference:
+
+```text
+emr_migration_demo/KT/06_scala_maven_spark_project.md
+```
+
+### 7. Shared Scala Utilities
+
+Created shared utilities:
+
+```text
+common/AppConfig.scala
+common/ArgsParser.scala
+common/S3Paths.scala
+common/SparkSessionFactory.scala
+common/DatasetIO.scala
+common/Udfs.scala
+```
+
+Refactored `RawDataCountApp` to use the helpers and verified the same tiny S3 counts.
+
+Reference:
+
+```text
+emr_migration_demo/KT/07_shared_scala_utilities.md
+```
+
 ## Important Commands
 
 Create S3 prefixes:
@@ -187,39 +250,7 @@ sudo dnf install -y maven
 
 ## Next Recommended Steps
 
-### Step 05: Scaffold Scala Maven Spark Project
-
-Create:
-
-```text
-emr_migration_demo/spark/pom.xml
-emr_migration_demo/spark/src/main/scala/com/demo/emr/
-```
-
-Target:
-
-```text
-Scala 2.12
-Spark 3.5.x
-```
-
-Spark dependencies should be marked as `provided`.
-
-### Step 06: Add Shared Scala Utilities
-
-Planned utilities:
-
-```text
-ArgsParser
-S3Paths
-SparkSessionFactory
-DatasetReaders
-DatasetWriters
-ValidationMetrics
-Udfs
-```
-
-### Step 07: Implement EMR Step 1
+### Step 08: Implement EMR Step 1
 
 Entry point:
 
@@ -236,7 +267,7 @@ Deduplicate/repartition
 Write converted/feature_log
 ```
 
-### Step 08: Implement EMR Step 2
+### Step 09: Implement EMR Step 2
 
 Entry point:
 
@@ -252,7 +283,7 @@ Compute eligibility/frequency fields
 Write converted/eligible_user_data
 ```
 
-### Step 09: Implement EMR Step 3
+### Step 10: Implement EMR Step 3
 
 Entry point:
 
@@ -272,7 +303,7 @@ union + sort
 write final/brbf
 ```
 
-### Step 10: Package And Run Tiny End-To-End
+### Step 11: Package And Run Tiny End-To-End
 
 Build:
 
@@ -289,7 +320,7 @@ aws s3 cp target/*.jar s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/
 
 Run the 3 steps on tiny data and validate output.
 
-### Step 11: Scale Data
+### Step 12: Scale Data
 
 After the tiny end-to-end pipeline works, regenerate data with `small`:
 
@@ -311,5 +342,5 @@ Only scale further after the EMR baseline works correctly.
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 05: scaffold the Scala Maven Spark project for the EMR BRBF before-DAG demo.
+Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 08: implement FeatureLogConverter, the first EMR step for the BRBF before-DAG demo.
 ```

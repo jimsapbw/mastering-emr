@@ -1,0 +1,4 @@
+spark/target/
+spark/.bsp/
+spark/.metals/
+spark/project/target/
