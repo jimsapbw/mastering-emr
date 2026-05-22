@@ -20,6 +20,7 @@ This folder documents the EMR-side demo design and the commands executed as we b
 ## References
 
 - [EMR Migration Demo Master Runbook](./emr_migration_demo_master_runbook.md)
+- [Resume Plan](./00_resume_plan.md)
 - [Simple Scala App To Shared Utility App](./reference_simple_vs_utility_scala_app.md)
 - [EMR Baseline Problem Statement](./emr_baseline_problem_statement.md)
 - [EMR Spark Troubleshooting Guide](./emr_spark_troubleshooting_guide.md)

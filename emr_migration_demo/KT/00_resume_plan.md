@@ -161,7 +161,7 @@ Latest GitHub backup:
 ```text
 Repository: https://github.com/jimsapbw/mastering-emr/tree/main/emr_migration_demo
 Branch: main
-Commit: db5768a Add EMR converter steps and KT docs
+Commit: 900df9d Add BRBF job and migration KT docs
 ```
 
 This latest commit includes:
@@ -169,9 +169,16 @@ This latest commit includes:
 ```text
 Step 08 FeatureLogConverter
 Step 09 EligibleUserDataLogConverter
+Step 10 BrbfJob
 KT docs for steps 08 and 09
+KT docs for Step 10 implementation and validation
 EMR baseline problem statement
 EMR Spark troubleshooting guide
+Master runbook
+Airflow orchestration plan
+Databricks post-migration plan
+Databricks Photon best practices
+Future migration stories
 Updated resume plan and KT index
 ```
 
@@ -329,6 +336,41 @@ Reference:
 
 ```text
 emr_migration_demo/KT/10_brbf_job.md
+emr_migration_demo/KT/10_brbf_job_validation.md
+```
+
+### 11. Step 10 Manual Validation Progress
+
+Created:
+
+```text
+emr_migration_demo/KT/10_brbf_job_validation.md
+```
+
+Validated manually in `spark-shell`:
+
+```text
+raw bids read correctly
+prepareBids created early derived columns
+supporting datasets were prepared
+sample bids joined to impressions
+sample bids joined to contextual
+sample bids joined to advertiser
+sample bids joined to KOA settings
+sample bids joined to eligible_user_data
+sample bids joined to feature_log
+sample bids joined to SIB
+5 sample bids expanded to 5000 joined rows
+post-join columns were created
+high/low aggregation example was documented
+```
+
+Current pause point:
+
+```text
+Resume with KT/10_brbf_job_validation.md.
+Continue from Validation 7: Final Output.
+Then proceed to Step 11: package/upload JAR and run EMR steps.
 ```
 
 ## Important Commands
@@ -439,5 +481,5 @@ Only scale further after the EMR baseline works correctly.
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 11: package the JAR, upload it to S3, and run the three EMR steps.
+Read emr_migration_demo/KT/00_resume_plan.md and KT/10_brbf_job_validation.md. Continue from Step 10 Validation 7 final output checks, then proceed to Step 11: package the JAR, upload it to S3, and run the three EMR steps.
 ```

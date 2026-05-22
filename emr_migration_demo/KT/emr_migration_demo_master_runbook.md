@@ -69,7 +69,7 @@ https://github.com/jimsapbw/mastering-emr/tree/main/emr_migration_demo
 Latest pushed commit at the time this runbook was created:
 
 ```text
-db5768a Add EMR converter steps and KT docs
+900df9d Add BRBF job and migration KT docs
 ```
 
 S3 code backup:
@@ -94,6 +94,14 @@ Local patch backup:
 
 ```text
 emr_migration_demo/KT/0001-Add-EMR-converter-steps-and-KT-docs.patch
+```
+
+Latest resume point:
+
+```text
+Step 10 implementation is complete and pushed to GitHub.
+Manual Step 10 validation is documented in KT/10_brbf_job_validation.md.
+Resume from Validation 7: Final Output, then continue to Step 11.
 ```
 
 ## S3 Layout
