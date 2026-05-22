@@ -428,6 +428,28 @@ S3 code backup location:
 s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo/
 ```
 
+Step 11 zip backup:
+
+```text
+s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-22_step11_complete.zip
+```
+
+Download zip backup:
+
+```bash
+aws s3 cp \
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-22_step11_complete.zip \
+  /mnt/tmp/emr_migration_demo_2026-05-22_step11_complete.zip \
+  --region us-east-1
+```
+
+Unzip backup:
+
+```bash
+mkdir -p /mnt/tmp/emr_migration_demo_restore
+unzip /mnt/tmp/emr_migration_demo_2026-05-22_step11_complete.zip -d /mnt/tmp/emr_migration_demo_restore
+```
+
 GitHub code backup location:
 
 ```text
