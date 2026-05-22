@@ -20,6 +20,67 @@ Executors
 Environment
 ```
 
+## Live UI Vs History UI
+
+Use the live Spark UI only while the Spark application is still running.
+
+In the AWS EMR console:
+
+```text
+EMR Console
+-> Clusters
+-> target cluster
+-> Application user interfaces
+```
+
+If a Spark application is running, EMR may show a direct Spark UI link.
+
+If the console only shows YARN ResourceManager and Spark History Server, open:
+
+```text
+YARN ResourceManager
+-> Applications
+-> running Spark application
+-> ApplicationMaster or Tracking UI
+```
+
+That link usually opens the live Spark UI while the application is active.
+
+After the Spark application finishes:
+
+```text
+Live Spark UI is no longer available.
+Use Spark History Server instead.
+```
+
+Post-run troubleshooting tools:
+
+```text
+EMR step history
+YARN completed application history
+Spark History Server
+YARN logs
+S3 output validation
+```
+
+Useful commands after a run completes:
+
+```bash
+aws emr list-steps \
+  --region us-east-1 \
+  --cluster-id <cluster-id> \
+  --query 'Steps[*].[Id,Name,Status.State,Status.Timeline.StartDateTime,Status.Timeline.EndDateTime]' \
+  --output table
+```
+
+```bash
+yarn application -list -appStates FINISHED,FAILED,KILLED
+```
+
+```bash
+yarn logs -applicationId <application_id> | less
+```
+
 ## Troubleshooting Workflow
 
 ### 1. Confirm Runtime Configuration

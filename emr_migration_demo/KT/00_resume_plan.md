@@ -464,8 +464,12 @@ Current Step 11 status:
 ```text
 JAR build: PASS
 JAR contents verified: PASS
-JAR upload to S3: BLOCKED because AWS CLI credentials are not configured
-EMR add-steps: BLOCKED until credentials are available
+JAR upload to S3: PASS
+EMR Step 1 FeatureLogConverter: COMPLETED
+EMR Step 2 EligibleUserDataLogConverter: COMPLETED
+EMR Step 3 BrbfJob: COMPLETED
+Final output count validation: PASS
+Final branch count validation: PASS
 ```
 
 Current cluster ID:
@@ -478,6 +482,17 @@ Reference:
 
 ```text
 emr_migration_demo/KT/11_package_upload_run_emr_steps.md
+```
+
+Observed Step 11 results:
+
+```text
+Step 1 ID: s-05260282LTDLOYKA0X5W
+Step 2 ID: s-05079433OEGPED8V5I0K
+Step 3 ID: s-021230414IK4ECF2EB4X
+finalBrbf.count() = 91883
+low_frequency_hash = 72500
+high_frequency_salted = 19383
 ```
 
 ### Step 12: Scale Data
@@ -502,5 +517,5 @@ Only scale further after the EMR baseline works correctly.
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md and KT/10_brbf_job_validation.md. Continue from Step 10 Validation 7 final output checks, then proceed to Step 11: package the JAR, upload it to S3, and run the three EMR steps.
+Read emr_migration_demo/KT/00_resume_plan.md and KT/11_package_upload_run_emr_steps.md. Continue after Step 11, which completed successfully, and proceed to Step 12: scale data and tune the EMR baseline runtime.
 ```

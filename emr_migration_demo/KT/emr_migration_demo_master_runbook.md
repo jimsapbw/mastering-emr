@@ -55,7 +55,7 @@ Step 10: BrbfJob
 Next:
 
 ```text
-Step 11: Package, upload JAR, and run EMR steps
+Step 12: Scale data and tune the EMR baseline runtime
 ```
 
 ## Repository And Backup Locations
@@ -101,8 +101,8 @@ Latest resume point:
 ```text
 Step 10 implementation and final-output validation are complete.
 Manual Step 10 validation is documented in KT/10_brbf_job_validation.md.
-Step 11 JAR build passed.
-Step 11 upload/add-steps are blocked until AWS credentials are configured.
+Step 11 package/upload/run EMR steps is complete.
+Resume from Step 12: scale data and tune the EMR baseline runtime.
 ```
 
 ## S3 Layout

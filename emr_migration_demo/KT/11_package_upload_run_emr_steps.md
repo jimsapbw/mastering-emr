@@ -80,7 +80,7 @@ aws s3 cp \
   --region us-east-1
 ```
 
-Current blocker:
+Initial blocker:
 
 ```text
 AWS CLI credentials are not configured on this node.
@@ -98,13 +98,49 @@ Unable to locate credentials
 No AWS Credentials provided
 ```
 
-Before continuing, configure AWS credentials or run the upload from an environment that has permission to write to the bucket.
+This was resolved by allowing the tool command to run with access to the EMR instance role credentials.
 
 Check credentials with:
 
 ```bash
 aws configure list
 aws sts get-caller-identity --region us-east-1
+```
+
+EMR control-plane permissions also had to be added to the EMR instance profile role:
+
+```text
+AmazonEMR-InstanceProfile-20260502T160809
+```
+
+Required actions:
+
+```text
+elasticmapreduce:DescribeCluster
+elasticmapreduce:ListInstanceGroups
+elasticmapreduce:ListBootstrapActions
+elasticmapreduce:AddJobFlowSteps
+elasticmapreduce:ListSteps
+elasticmapreduce:DescribeStep
+```
+
+Cluster readiness check passed:
+
+```text
+Cluster state: WAITING
+Message: Cluster ready to run steps.
+```
+
+Upload result:
+
+```text
+upload: spark/target/emr-migration-demo-0.1.0.jar to s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar
+```
+
+S3 verification:
+
+```text
+2026-05-22 19:15:01      52921 emr-migration-demo-0.1.0.jar
 ```
 
 ## Submit EMR Steps
@@ -139,6 +175,13 @@ aws emr add-steps \
   ]'
 ```
 
+Observed:
+
+```text
+Step ID: s-05260282LTDLOYKA0X5W
+Status: COMPLETED
+```
+
 ### Step 2: EligibleUserDataLogConverter
 
 ```bash
@@ -167,6 +210,13 @@ aws emr add-steps \
   ]'
 ```
 
+Observed:
+
+```text
+Step ID: s-05079433OEGPED8V5I0K
+Status: COMPLETED
+```
+
 ### Step 3: BrbfJob
 
 ```bash
@@ -193,6 +243,13 @@ aws emr add-steps \
       ]
     }
   ]'
+```
+
+Observed:
+
+```text
+Step ID: s-021230414IK4ECF2EB4X
+Status: COMPLETED
 ```
 
 ## Monitor Steps
@@ -257,6 +314,23 @@ Final output path:
 s3://aigithub-emr-2026/emr-migration-demo/final/brbf/year=2026/month=05/day=21/hour=10/
 ```
 
+Observed final validation:
+
+```text
+finalBrbf.count() = 91883
+```
+
+Observed branch counts:
+
+```text
++---------------------+-----+
+|branch               |count|
++---------------------+-----+
+|low_frequency_hash   |72500|
+|high_frequency_salted|19383|
++---------------------+-----+
+```
+
 ## Current Status
 
 Completed:
@@ -264,17 +338,16 @@ Completed:
 ```text
 JAR build: PASS
 JAR contents verified: PASS
+JAR upload to S3: PASS
+EMR Step 1 FeatureLogConverter: COMPLETED
+EMR Step 2 EligibleUserDataLogConverter: COMPLETED
+EMR Step 3 BrbfJob: COMPLETED
+Final output count validation: PASS
+Final branch count validation: PASS
 ```
 
-Blocked:
+Step 11 conclusion:
 
 ```text
-JAR upload to S3
-EMR add-steps
-```
-
-Reason:
-
-```text
-AWS credentials are not configured in the current shell.
+PASS
 ```
