@@ -434,12 +434,18 @@ Step 11 zip backup:
 s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-22_step11_complete.zip
 ```
 
+Step 12 zip backup:
+
+```text
+s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-22_step12_small_run_complete.zip
+```
+
 Download zip backup:
 
 ```bash
 aws s3 cp \
-  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-22_step11_complete.zip \
-  /mnt/tmp/emr_migration_demo_2026-05-22_step11_complete.zip \
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-22_step12_small_run_complete.zip \
+  /mnt/tmp/emr_migration_demo_2026-05-22_step12_small_run_complete.zip \
   --region us-east-1
 ```
 
@@ -447,7 +453,7 @@ Unzip backup:
 
 ```bash
 mkdir -p /mnt/tmp/emr_migration_demo_restore
-unzip /mnt/tmp/emr_migration_demo_2026-05-22_step11_complete.zip -d /mnt/tmp/emr_migration_demo_restore
+unzip /mnt/tmp/emr_migration_demo_2026-05-22_step12_small_run_complete.zip -d /mnt/tmp/emr_migration_demo_restore
 ```
 
 GitHub code backup location:
@@ -534,10 +540,68 @@ koa_settings: 10,000
 
 Only scale further after the EMR baseline works correctly.
 
+Current Step 12 status:
+
+```text
+small S3 prefix layout: PASS
+small data generation: PASS
+small raw data validation: PASS
+small EMR Step 1 FeatureLogConverter: COMPLETED
+small EMR Step 2 EligibleUserDataLogConverter: COMPLETED
+small EMR Step 3 BrbfJob: COMPLETED
+small final output validation: NEXT
+small Spark troubleshooting walkthrough: NEXT
+```
+
+Small data prefix:
+
+```text
+s3://aigithub-emr-2026/emr-migration-demo-small/
+```
+
+Small EMR step IDs:
+
+```text
+Step 1 ID: s-068112428LZKPF5DOUMU
+Step 2 ID: s-0730235RZAH2SJX8RGR
+Step 3 ID: s-024954934CXKODACJN4N
+```
+
+Live Spark/YARN application observed for Step 3:
+
+```text
+application_1779457953547_0015
+name=emr-migration-brbf-before-dag
+tag=s-024954934cxkodacjn4n
+state=FINISHED/SUCCEEDED
+```
+
+Next resume action:
+
+```text
+Resume after the completed small BRBF run.
+Validate the small final output under:
+  s3://aigithub-emr-2026/emr-migration-demo-small/final/brbf/year=2026/month=05/day=21/hour=10/
+Then use KT/emr_spark_troubleshooting_guide.md to walk through Spark History Server:
+  Jobs
+  Stages
+  SQL
+  Executors
+  Environment
+Capture bottlenecks, shuffle, skew, spill, and physical operators.
+```
+
+Reference:
+
+```text
+emr_migration_demo/KT/12_scale_data_and_tune_runtime.md
+emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
+```
+
 ## Resume Prompt
 
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md and KT/11_package_upload_run_emr_steps.md. Continue after Step 11, which completed successfully, and proceed to Step 12: scale data and tune the EMR baseline runtime.
+Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, and KT/emr_spark_troubleshooting_guide.md. Resume Step 12 after the small EMR pipeline completed. Validate the small final output for s3://aigithub-emr-2026/emr-migration-demo-small/final/brbf/year=2026/month=05/day=21/hour=10/, then walk through Spark History Server step by step to identify jobs, stages, SQL operators, shuffle, skew, spill, and bottlenecks.
 ```

@@ -17,6 +17,7 @@ This folder documents the EMR-side demo design and the commands executed as we b
 10. [BRBF Job](./10_brbf_job.md)
 11. [BRBF Job Validation](./10_brbf_job_validation.md)
 12. [Package Upload Run EMR Steps](./11_package_upload_run_emr_steps.md)
+13. [Scale Data And Tune Runtime](./12_scale_data_and_tune_runtime.md)
 
 ## References
 

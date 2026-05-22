@@ -24,6 +24,19 @@ Environment
 
 Use the live Spark UI only while the Spark application is still running.
 
+Current demo cluster details:
+
+```text
+Cluster name: itv-github-dev-cluster
+Cluster ID: j-37DIRU3WHU1C5
+Region: us-east-1
+EMR version: emr-7.13.0
+Spark version: 3.5.6
+Primary node public DNS: ec2-100-55-172-52.compute-1.amazonaws.com
+Log destination: s3://aws-logs-210570462212-us-east-1/elasticmapreduce/
+CloudWatch log group: /aws/emr/j-37DIRU3WHU1C5
+```
+
 In the AWS EMR console:
 
 ```text
@@ -45,6 +58,24 @@ YARN ResourceManager
 ```
 
 That link usually opens the live Spark UI while the application is active.
+
+If the YARN application shows:
+
+```text
+Tracking UI = Unassigned
+```
+
+refresh the YARN page a few times. This means YARN knows about the running application, but the live Spark UI link has not been assigned or displayed yet.
+
+For direct access to the live Spark UI, try the Spark driver UI ports on the primary node:
+
+```text
+http://ec2-100-55-172-52.compute-1.amazonaws.com:4040
+http://ec2-100-55-172-52.compute-1.amazonaws.com:4041
+http://ec2-100-55-172-52.compute-1.amazonaws.com:4042
+```
+
+Spark usually starts with port `4040`. If that port is already in use by another Spark application or shell, the next application may use `4041`, `4042`, and so on.
 
 After the Spark application finishes:
 
