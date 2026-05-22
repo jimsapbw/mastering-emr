@@ -459,6 +459,27 @@ aws s3 cp target/*.jar s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/
 
 Run the 3 steps on tiny data as EMR steps and validate output.
 
+Current Step 11 status:
+
+```text
+JAR build: PASS
+JAR contents verified: PASS
+JAR upload to S3: BLOCKED because AWS CLI credentials are not configured
+EMR add-steps: BLOCKED until credentials are available
+```
+
+Current cluster ID:
+
+```text
+j-37DIRU3WHU1C5
+```
+
+Reference:
+
+```text
+emr_migration_demo/KT/11_package_upload_run_emr_steps.md
+```
+
 ### Step 12: Scale Data
 
 After the tiny end-to-end pipeline works, regenerate data with `small`:

@@ -16,6 +16,7 @@ This folder documents the EMR-side demo design and the commands executed as we b
 9. [Eligible User Data Converter](./09_eligible_user_data_converter.md)
 10. [BRBF Job](./10_brbf_job.md)
 11. [BRBF Job Validation](./10_brbf_job_validation.md)
+12. [Package Upload Run EMR Steps](./11_package_upload_run_emr_steps.md)
 
 ## References
 

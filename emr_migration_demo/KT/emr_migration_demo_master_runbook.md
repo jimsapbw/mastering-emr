@@ -99,9 +99,10 @@ emr_migration_demo/KT/0001-Add-EMR-converter-steps-and-KT-docs.patch
 Latest resume point:
 
 ```text
-Step 10 implementation is complete and pushed to GitHub.
+Step 10 implementation and final-output validation are complete.
 Manual Step 10 validation is documented in KT/10_brbf_job_validation.md.
-Resume from Validation 7: Final Output, then continue to Step 11.
+Step 11 JAR build passed.
+Step 11 upload/add-steps are blocked until AWS credentials are configured.
 ```
 
 ## S3 Layout

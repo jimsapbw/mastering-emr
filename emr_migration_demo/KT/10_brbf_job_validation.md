@@ -869,10 +869,36 @@ Expected tiny-run value:
 91883
 ```
 
+Observed:
+
+```text
+finalBrbf.count() = 91883
+```
+
 Check branches:
 
 ```scala
 finalBrbf.groupBy("branch").count().show(false)
+```
+
+Observed:
+
+```text
++---------------------+-----+
+|branch               |count|
++---------------------+-----+
+|low_frequency_hash   |72500|
+|high_frequency_salted|19383|
++---------------------+-----+
+```
+
+Interpretation:
+
+```text
+Both final output branches were written successfully.
+The high-frequency salted branch exists.
+The low-frequency hash branch exists.
+The unioned final output can be read back from S3.
 ```
 
 Inspect high-frequency salted output:
@@ -892,6 +918,39 @@ finalBrbf.filter(col("branch") === "high_frequency_salted")
   .show(20, false)
 ```
 
+Observed high-frequency salted sample:
+
+```text
++-------------+-----------+-------------+-----------------+----+-----------+---------+-------------------+
+|advertiser_id|campaign_id|contextual_id|frequency_bracket|salt|event_count|bid_count|feature_event_count|
++-------------+-----------+-------------+-----------------+----+-----------+---------+-------------------+
+|1            |18701      |1            |high             |9   |50         |1        |50                 |
+|1            |18701      |1            |high             |7   |50         |1        |50                 |
+|1            |18706      |6            |high             |9   |50         |1        |50                 |
+|1            |18706      |6            |high             |14  |50         |1        |50                 |
++-------------+-----------+-------------+-----------------+----+-----------+---------+-------------------+
+```
+
+Interpretation:
+
+```text
+frequency_bracket is high
+salt contains real bucket values
+event_count and feature_event_count are aggregated
+bid_count can remain 1 when one bid expands to many feature-log events
+```
+
+This validates:
+
+```scala
+.withColumn("salt", pmod(abs(hash(col("bid_request_id"))), lit(SaltBuckets)))
+.withColumn("salted_user_key", concat_ws("#", col("user_id_hash"), col("salt")))
+.repartition(col("salted_user_key"), col("contextual_id"))
+.groupBy(..., col("salt"))
+.agg(...)
+.withColumn("branch", lit("high_frequency_salted"))
+```
+
 Inspect low-frequency output:
 
 ```scala
@@ -909,6 +968,39 @@ finalBrbf.filter(col("branch") === "low_frequency_hash")
   .show(20, false)
 ```
 
+Observed low-frequency sample:
+
+```text
++-------------+-----------+-------------+-----------------+----+-----------+---------+-------------------+
+|advertiser_id|campaign_id|contextual_id|frequency_bracket|salt|event_count|bid_count|feature_event_count|
++-------------+-----------+-------------+-----------------+----+-----------+---------+-------------------+
+|3            |15123      |23           |low              |NULL|2          |2        |1                  |
+|3            |15128      |28           |low              |NULL|2          |2        |1                  |
+|3            |15133      |33           |low              |NULL|2          |2        |1                  |
+|3            |15138      |5138         |low              |NULL|1          |1        |0                  |
+|3            |15138      |15138        |low              |NULL|1          |1        |1                  |
++-------------+-----------+-------------+-----------------+----+-----------+---------+-------------------+
+```
+
+Interpretation:
+
+```text
+frequency_bracket is low
+salt is NULL
+low-frequency rows were aggregated without manual salting
+event_count, bid_count, and feature_event_count are present
+```
+
+This validates:
+
+```scala
+.repartition(col("user_id_hash"), col("contextual_id"))
+.groupBy(...)
+.agg(...)
+.withColumn("salt", lit(null).cast("int"))
+.withColumn("branch", lit("low_frequency_hash"))
+```
+
 Salt sanity check:
 
 ```scala
@@ -920,6 +1012,40 @@ Expected:
 ```text
 high_frequency_salted has salt values
 low_frequency_hash has null salt
+```
+
+Observed:
+
+```text
++---------------------+----+-----+
+|branch               |salt|count|
++---------------------+----+-----+
+|high_frequency_salted|0   |1215 |
+|high_frequency_salted|1   |1240 |
+|high_frequency_salted|2   |1203 |
+|high_frequency_salted|3   |1230 |
+|high_frequency_salted|4   |1153 |
+|high_frequency_salted|5   |1201 |
+|high_frequency_salted|6   |1310 |
+|high_frequency_salted|7   |1200 |
+|high_frequency_salted|8   |1156 |
+|high_frequency_salted|9   |1204 |
+|high_frequency_salted|10  |1205 |
+|high_frequency_salted|11  |1169 |
+|high_frequency_salted|12  |1217 |
+|high_frequency_salted|13  |1241 |
+|high_frequency_salted|14  |1205 |
+|high_frequency_salted|15  |1234 |
+|low_frequency_hash   |NULL|72500|
++---------------------+----+-----+
+```
+
+Interpretation:
+
+```text
+High-frequency rows are distributed across all 16 salt buckets.
+Low-frequency rows have NULL salt as expected.
+The high-frequency salted branch and low-frequency hash branch have compatible final schemas.
 ```
 
 ## Validation Summary
@@ -941,6 +1067,8 @@ feature-log join expands rows as expected
 post-join columns are created
 high/low aggregation logic is understood through example
 final output can be read and checked
+final branch counts are validated
+salt distribution is validated
 ```
 
 ## Common Spark Shell Errors
