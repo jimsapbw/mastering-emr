@@ -20,6 +20,12 @@ Output to S3
 
 Databricks migration planning is intentionally deferred until the EMR baseline is built and measured.
 
+Master runbook:
+
+```text
+emr_migration_demo/KT/emr_migration_demo_master_runbook.md
+```
+
 ## Completed So Far
 
 ### 1. S3 Prefixes
@@ -150,6 +156,39 @@ Reference:
 emr_migration_demo/KT/05_git_backup.md
 ```
 
+Latest GitHub backup:
+
+```text
+Repository: https://github.com/jimsapbw/mastering-emr/tree/main/emr_migration_demo
+Branch: main
+Commit: db5768a Add EMR converter steps and KT docs
+```
+
+This latest commit includes:
+
+```text
+Step 08 FeatureLogConverter
+Step 09 EligibleUserDataLogConverter
+KT docs for steps 08 and 09
+EMR baseline problem statement
+EMR Spark troubleshooting guide
+Updated resume plan and KT index
+```
+
+The commit was created from:
+
+```text
+/mnt/tmp/mastering-emr-codex-backup
+```
+
+and pushed with GitHub HTTPS/PAT authentication.
+
+Local patch backup:
+
+```text
+emr_migration_demo/KT/0001-Add-EMR-converter-steps-and-KT-docs.patch
+```
+
 ### 6. Scala Maven Spark Project
 
 Created the Scala/Maven project:
@@ -254,6 +293,44 @@ Reference:
 emr_migration_demo/KT/09_eligible_user_data_converter.md
 ```
 
+### 10. BRBF Job
+
+Created the main EMR baseline entry point:
+
+```text
+emr_migration_demo/spark/src/main/scala/com/demo/emr/BrbfJob.scala
+```
+
+Verified:
+
+```text
+Maven build: PASS
+BrbfJob tiny S3 run: PASS
+```
+
+Observed:
+
+```text
+brbf_job.source_bids_count=100000
+brbf_job.source_impressions_count=70000
+brbf_job.source_contextual_count=20000
+brbf_job.source_advertiser_count=1000
+brbf_job.source_koa_settings_count=1000
+brbf_job.source_eligible_user_data_count=20000
+brbf_job.source_feature_log_count=50000
+brbf_job.source_sib_count=16200
+brbf_job.joined_row_count=1080000
+brbf_job.high_frequency_joined_count=1000000
+brbf_job.low_frequency_joined_count=80000
+brbf_job.final_output_count=91883
+```
+
+Reference:
+
+```text
+emr_migration_demo/KT/10_brbf_job.md
+```
+
 ## Important Commands
 
 Create S3 prefixes:
@@ -303,6 +380,18 @@ Restore local demo files from S3:
 aws s3 sync s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo/ emr_migration_demo/ --region us-east-1
 ```
 
+S3 code backup location:
+
+```text
+s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo/
+```
+
+GitHub code backup location:
+
+```text
+https://github.com/jimsapbw/mastering-emr/tree/main/emr_migration_demo
+```
+
 Install Maven on a new cluster:
 
 ```bash
@@ -310,26 +399,6 @@ sudo dnf install -y maven
 ```
 
 ## Next Recommended Steps
-
-### Step 10: Implement EMR Step 3
-
-Entry point:
-
-```text
-com.demo.emr.BrbfJob
-```
-
-Purpose:
-
-```text
-Replicate the before DAG:
-read sources
-compute derived columns early
-join impressions, advertiser, feature log, SIB
-manual salting
-union + sort
-write final/brbf
-```
 
 ### Step 11: Package And Run Tiny End-To-End
 
@@ -346,7 +415,7 @@ Upload JAR:
 aws s3 cp target/*.jar s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/ --region us-east-1
 ```
 
-Run the 3 steps on tiny data and validate output.
+Run the 3 steps on tiny data as EMR steps and validate output.
 
 ### Step 12: Scale Data
 
@@ -370,5 +439,5 @@ Only scale further after the EMR baseline works correctly.
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 10: implement BrbfJob, the main BRBF before-DAG job.
+Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 11: package the JAR, upload it to S3, and run the three EMR steps.
 ```

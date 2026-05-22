@@ -12,6 +12,12 @@ For the troubleshooting workflow and Spark UI evidence to capture, see:
 emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
 ```
 
+For future migration improvement stories that are not part of the first EMR baseline, see:
+
+```text
+emr_migration_demo/KT/future_migration_stories.md
+```
+
 ## Problem Statement
 
 Build an EMR Spark Scala baseline that simulates a BRBF-style ad-tech pipeline. The baseline reads multiple S3-backed Parquet datasets, computes UDF-derived columns early, repartitions data manually, joins large and skewed datasets, handles high-frequency users through custom logic, and writes partitioned Parquet outputs.
@@ -243,6 +249,122 @@ Purpose in the baseline:
 
 ```text
 Prepare user eligibility and high/low frequency split data before the main BRBF job, while making manual skew-handling inputs explicit.
+```
+
+### Step 10: BrbfJob
+
+Entry point:
+
+```text
+com.demo.emr.BrbfJob
+```
+
+Introduced baseline traits:
+
+- AQE disabled for the before-DAG baseline:
+
+```text
+spark.sql.adaptive.enabled=false
+spark.sql.adaptive.skewJoin.enabled=false
+```
+
+- Early bid-derived columns:
+
+```text
+normalized_user_id
+source_user_id_hash
+user_id_hash
+bid_request_hash
+contextual_join_key
+rounded_bid_time
+bid_price_bucket
+event_quality_score
+campaign_grouping_key
+```
+
+- UDF-heavy transformations in the critical path:
+
+```text
+user_id_hash         = Udfs.sha256String(normalized_user_id)
+bid_request_hash     = Udfs.sha256String(bid_request_id)
+contextual_join_key  = Udfs.sha256String(contextual_id)
+rounded_bid_time     = Udfs.roundTimestampToMinutes(5)(bid_timestamp)
+```
+
+- Multi-source join pressure:
+
+```text
+bids -> impressions_feedback
+bids -> contextual
+bids -> advertiser
+bids -> koa_settings
+bids -> eligible_user_data
+bids -> feature_log
+bids -> sib
+```
+
+- Broadcast joins for small dimensions:
+
+```text
+advertiser
+koa_settings
+```
+
+- Manual skew handling:
+
+```text
+split high-frequency users
+split low-frequency users
+apply salt to high-frequency branch
+repartition by salted user/context key
+aggregate high and low branches separately
+union branches
+sort final output
+```
+
+- Persisting a wide joined DataFrame:
+
+```text
+MEMORY_AND_DISK
+```
+
+Purpose in the baseline:
+
+```text
+Create the main before-DAG evidence point: wide rows, expensive joins, explicit shuffles, skewed high-frequency branch, manual salting, union, sort, and Parquet output.
+```
+
+Tiny-run evidence:
+
+```text
+brbf_job.source_bids_count=100000
+brbf_job.source_impressions_count=70000
+brbf_job.source_feature_log_count=50000
+brbf_job.source_sib_count=16200
+brbf_job.joined_row_count=1080000
+brbf_job.high_frequency_joined_count=1000000
+brbf_job.low_frequency_joined_count=80000
+brbf_job.final_output_count=91883
+```
+
+What this proves:
+
+```text
+100,000 bids expanded to 1,080,000 joined rows.
+The high-frequency branch dominates the joined workload.
+Manual salting is exercised.
+The final aggregation reduces the expanded join output to 91,883 rows.
+```
+
+Future Databricks comparison opportunities:
+
+```text
+replace UDFs with native expressions where possible
+use AQE and skew-aware joins
+reduce manual salting/repartition code
+defer nonessential derived columns
+compare Parquet output to Delta layout
+evaluate Photon-friendly joins, scans, aggregations, and sorts
 ```
 
 ## Shared Problem Across Steps 08 And 09
