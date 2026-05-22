@@ -193,6 +193,67 @@ Reference:
 emr_migration_demo/KT/07_shared_scala_utilities.md
 ```
 
+### 8. Feature Log Converter
+
+Created the first EMR pipeline entry point:
+
+```text
+emr_migration_demo/spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala
+```
+
+Verified:
+
+```text
+Maven build: PASS
+FeatureLogConverter tiny S3 run: PASS
+```
+
+Observed:
+
+```text
+feature_log_converter.raw_feature_log_count=50000
+feature_log_converter.converted_feature_log_count=50000
+feature_log_converter.distinct_user_hash_count=40200
+feature_log_converter.distinct_contextual_count=13035
+```
+
+Reference:
+
+```text
+emr_migration_demo/KT/08_feature_log_converter.md
+```
+
+### 9. Eligible User Data Converter
+
+Created the second EMR pipeline entry point:
+
+```text
+emr_migration_demo/spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala
+```
+
+Verified:
+
+```text
+Maven build: PASS
+EligibleUserDataLogConverter tiny S3 run: PASS
+```
+
+Observed:
+
+```text
+eligible_user_data_converter.raw_matched_user_data_count=20000
+eligible_user_data_converter.converted_eligible_user_data_count=20000
+eligible_user_data_converter.eligible_user_count=5000
+eligible_user_data_converter.high_frequency_count=4000
+eligible_user_data_converter.low_frequency_count=16000
+```
+
+Reference:
+
+```text
+emr_migration_demo/KT/09_eligible_user_data_converter.md
+```
+
 ## Important Commands
 
 Create S3 prefixes:
@@ -250,39 +311,6 @@ sudo dnf install -y maven
 
 ## Next Recommended Steps
 
-### Step 08: Implement EMR Step 1
-
-Entry point:
-
-```text
-com.demo.emr.FeatureLogConverter
-```
-
-Purpose:
-
-```text
-Read raw feature_log
-Apply hash/time style transformations
-Deduplicate/repartition
-Write converted/feature_log
-```
-
-### Step 09: Implement EMR Step 2
-
-Entry point:
-
-```text
-com.demo.emr.EligibleUserDataLogConverter
-```
-
-Purpose:
-
-```text
-Read raw matched_user_data
-Compute eligibility/frequency fields
-Write converted/eligible_user_data
-```
-
 ### Step 10: Implement EMR Step 3
 
 Entry point:
@@ -309,7 +337,7 @@ Build:
 
 ```bash
 cd emr_migration_demo/spark
-mvn clean package
+mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
 ```
 
 Upload JAR:
@@ -342,5 +370,5 @@ Only scale further after the EMR baseline works correctly.
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 08: implement FeatureLogConverter, the first EMR step for the BRBF before-DAG demo.
+Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 10: implement BrbfJob, the main BRBF before-DAG job.
 ```

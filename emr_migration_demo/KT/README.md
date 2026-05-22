@@ -12,7 +12,11 @@ This folder documents the EMR-side demo design and the commands executed as we b
 5. [GitHub Backup](./05_git_backup.md)
 6. [Scala Maven Spark Project](./06_scala_maven_spark_project.md)
 7. [Shared Scala Utilities](./07_shared_scala_utilities.md)
+8. [Feature Log Converter](./08_feature_log_converter.md)
+9. [Eligible User Data Converter](./09_eligible_user_data_converter.md)
 
 ## References
 
 - [Simple Scala App To Shared Utility App](./reference_simple_vs_utility_scala_app.md)
+- [EMR Baseline Problem Statement](./emr_baseline_problem_statement.md)
+- [EMR Spark Troubleshooting Guide](./emr_spark_troubleshooting_guide.md)
