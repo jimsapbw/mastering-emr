@@ -397,9 +397,42 @@ jobs with many stages
 jobs triggered by count/write/show actions
 ```
 
+Focus guidance:
+
+```text
+If one job or SQL query takes 40%-50% or more of total app runtime, start there.
+If no single job dominates, inspect the top 2-3 jobs or SQL queries by duration.
+If the top 2-3 jobs together explain 70%-80% of runtime, they are the first investigation set.
+```
+
+Also watch for repeated patterns:
+
+```text
+many repeated small jobs
+many repeated scans
+many repeated shuffles
+many repeated retries
+```
+
+Dominant duration finds the biggest bottleneck. Repeated patterns reveal death by a thousand cuts.
+
 For our converters, `count()` and `write` actions create Spark jobs.
 
 For the main BRBF job, the final write will likely trigger the heaviest work.
+
+Use the SQL physical plan twice:
+
+```text
+First look:
+  After finding the longest job/query, open the SQL tab and physical plan.
+  Use it as a map of operators: scan, project/UDF, join, Exchange, aggregate, sort, write.
+
+Second look:
+  After finding a bottleneck stage, return to the physical plan.
+  Map the stage back to the operator or Exchange that caused it.
+```
+
+The physical plan gives the map. Stage metrics give the evidence. Returning to the physical plan connects the evidence back to the code path.
 
 ### 4. Find Expensive Stages
 
@@ -423,6 +456,16 @@ output size
 task time variance
 failed/retried tasks
 ```
+
+Focus guidance:
+
+```text
+If one stage takes 40%-50% or more of the job/query runtime, start there.
+If no single stage dominates, inspect the top 2-3 stages by duration.
+If the top 2-3 stages explain 70%-80% of the job/query runtime, they are the first stage investigation set.
+```
+
+Do not ignore a short stage if it repeats many times, fails, spills heavily, or reveals the same shuffle pattern across the app.
 
 Important symptoms:
 
@@ -500,7 +543,56 @@ Disk Spill
 Peak Execution Memory
 ```
 
-### 5. Diagnose Skew
+Stage diagnosis matrix:
+
+```text
+High max shuffle read + high max duration:
+  Likely skew.
+  One or a few tasks got much more data and took much longer.
+
+High max shuffle read + normal duration:
+  Not necessarily a bottleneck.
+  A task read more data, but it did not hurt runtime much.
+
+Normal max shuffle read + high max duration:
+  Not data skew.
+  Investigate GC, spill, scheduler delay, shuffle fetch wait, executor imbalance, or straggler behavior.
+
+High max shuffle read + high spill + high duration:
+  Skew plus memory pressure.
+  A large partition is too big and spills, making the slow task worse.
+
+Normal shuffle read + high spill + high duration:
+  Memory pressure, not skew.
+  Data is balanced, but each task's operation is memory-heavy.
+
+Normal shuffle read + normal spill + high duration:
+  Look at scheduler delay, shuffle fetch wait, CPU/operator cost, or code path.
+
+Small shuffle read per task + many tasks + long stage:
+  Too many small partitions or task-wave overhead.
+
+Large shuffle read per task + spill + long tasks:
+  Too few/heavy partitions or large shuffle workload.
+
+One executor has much higher task time, shuffle, or spill:
+  Executor imbalance, host issue, or skew concentrated on one executor.
+
+All executors balanced but stage is slow:
+  Workload design, partitioning, or operator cost is likely the bottleneck.
+```
+
+Practical order:
+
+```text
+1. Compare max shuffle read vs median shuffle read.
+2. Compare max duration vs median duration.
+3. Check memory spill, disk spill, GC time, and peak execution memory.
+4. Check scheduler delay and shuffle fetch wait.
+5. Check executor balance.
+```
+
+### 4.1 Diagnose Skew
 
 In the Stages tab, open a long-running stage and inspect task durations.
 
@@ -619,7 +711,145 @@ Use these as directional thresholds, not hard rules. Cluster size, executor memo
 
 This is especially important for the main BRBF job after high-frequency users and hot contextual keys are joined.
 
-### 6. Identify Operators
+### 4.2 Diagnose Memory Pressure
+
+Memory pressure means tasks are struggling to keep working data in memory.
+
+Common symptoms:
+
+```text
+high GC time
+memory spill
+disk spill
+high peak execution memory
+slow tasks spill more than normal tasks
+executors show uneven spill or GC
+```
+
+First memory-pressure check:
+
+```text
+Compare GC time to task duration.
+Check memory spill and disk spill.
+Check peak execution memory if available.
+Compare spill and GC across executors.
+```
+
+Actual demo example from Step 12, Job 22, Stage 38:
+
+```text
+median task duration: 4 s
+max task duration:    20 s
+max GC time:          0.6 s
+memory spill:         not shown in summary
+disk spill:           not shown in summary
+executor balance:     100 tasks / 100 tasks
+```
+
+Interpretation:
+
+```text
+Not obvious memory pressure.
+GC is low relative to task duration.
+No spill was visible in the captured summary.
+Executors were balanced.
+The bottleneck is more likely task-wave overhead from many small shuffle partitions.
+```
+
+Hypothetical high-GC memory-pressure example:
+
+```text
+median task duration: 2 min
+max task duration:    8 min
+median GC time:       45 s
+max GC time:          4 min
+memory spill:         20 GiB total
+disk spill:           120 GiB total
+peak execution memory near executor limit
+```
+
+Interpretation:
+
+```text
+Likely memory pressure.
+Tasks spend a large share of runtime in garbage collection.
+Spark spills data to memory and disk because joins or aggregations do not fit comfortably.
+Investigate join size, aggregation cardinality, shuffle size, executor memory, partition sizing, and skew.
+```
+
+Practical GC benchmarks:
+
+```text
+Healthy or acceptable:
+  GC time is less than about 5%-10% of task runtime
+  little or no spill
+  peak execution memory is comfortably below executor memory
+
+Watch closely:
+  GC time is about 10%-20% of task runtime
+  some memory spill appears
+  disk spill appears on a few tasks
+
+Likely memory pressure:
+  GC time is greater than about 20%-30% of task runtime
+  meaningful memory spill and disk spill
+  slow tasks spill much more than normal tasks
+  stage time tracks spill-heavy tasks
+
+Severe memory pressure:
+  GC time is greater than about 50% of task runtime
+  large disk spill
+  executor lost / OOM / container killed
+  tasks repeatedly retry or fail
+```
+
+For large client workloads with hundreds of GB or TBs:
+
+```text
+Do not judge memory pressure by spill alone.
+Some spill can be normal in very large joins or aggregations.
+Judge by the relationship between spill, GC, task duration, and failures.
+
+Example not necessarily severe:
+  total disk spill: 50 GiB
+  task duration is balanced
+  GC is low
+  no retries or executor failures
+
+Example likely memory pressure:
+  total disk spill: 2 TiB
+  GC is 30%-60% of task time
+  slowest tasks spill much more than median
+  executor failures or OOM messages appear
+```
+
+Common causes:
+
+```text
+large shuffle joins
+high-cardinality aggregations
+countDistinct
+too few shuffle partitions
+skewed partitions
+large broadcast side
+wide rows kept before joins
+persist/cache pressure
+```
+
+Databricks optimization angles:
+
+```text
+AQE partition coalescing or skew handling
+better join strategy
+better table statistics
+Delta layout and file sizing
+Photon for supported joins and aggregations
+rewriting UDF-heavy logic to native expressions
+executor sizing changes
+reducing unnecessary cache/persist pressure
+```
+
+### 5. Identify Operators
 
 Go to:
 
@@ -665,7 +895,7 @@ sort/orderBy
 distinct/dropDuplicates
 ```
 
-### 7. Use Explain Plans From Code Or Shell
+### 6. Use Explain Plans From Code Or Shell
 
 Before running a job, use:
 

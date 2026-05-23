@@ -25,6 +25,7 @@ This folder documents the EMR-side demo design and the commands executed as we b
 - [Resume Plan](./00_resume_plan.md)
 - [Simple Scala App To Shared Utility App](./reference_simple_vs_utility_scala_app.md)
 - [EMR Baseline Problem Statement](./emr_baseline_problem_statement.md)
+- [Spark Troubleshooting Cheat Sheet](./spark_troubleshooting_cheat_sheet.md)
 - [EMR Spark Troubleshooting Guide](./emr_spark_troubleshooting_guide.md)
 - [Client Spark UI Troubleshooting Plan](./client_spark_ui_troubleshooting_plan.md)
 - [Future Migration Stories](./future_migration_stories.md)
@@ -79,6 +80,7 @@ Use these when packaging, submitting, monitoring, or scaling the EMR workload:
 
 Use these when reviewing Spark History Server, YARN, stages, SQL operators, skew, shuffle, or spills:
 
+- [Spark Troubleshooting Cheat Sheet](./spark_troubleshooting_cheat_sheet.md)
 - [EMR Spark Troubleshooting Guide](./emr_spark_troubleshooting_guide.md)
 - [Client Spark UI Troubleshooting Plan](./client_spark_ui_troubleshooting_plan.md)
 

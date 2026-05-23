@@ -519,10 +519,14 @@ Tasks:
    - driver memory
    - dynamic allocation settings
 3. If key SQL settings are not visible in Environment, open the SQL tab.
-4. Click the longest SQL/DataFrame query and check query details for runtime configs and the physical plan.
-5. Check whether the physical plan contains AdaptiveSparkPlan.
-6. In the Stages tab, confirm whether shuffle-heavy stages have task counts that match spark.sql.shuffle.partitions.
-7. Record whether settings were observed directly, inferred from SQL plan behavior, or inferred from stage task counts.
+4. Pick the SQL/DataFrame query to inspect using this focus rule:
+   - if one query is 40%-50% or more of app runtime, start there
+   - if no single query dominates, inspect the top 2-3 by duration
+   - if many small queries repeat, note the repeated pattern
+5. Click the selected SQL/DataFrame query and check query details for runtime configs and the physical plan.
+6. Check whether the physical plan contains AdaptiveSparkPlan.
+7. In the Stages tab, confirm whether shuffle-heavy stages have task counts that match spark.sql.shuffle.partitions.
+8. Record whether settings were observed directly, inferred from SQL plan behavior, or inferred from stage task counts.
 
 Return the findings in this table:
 
@@ -656,7 +660,17 @@ Please produce:
    - driver memory
    - dynamic allocation
 
-2. Operator inventory
+2. Query/stage focus check
+   Confirm why this query was selected:
+   - one query is 40%-50% or more of app runtime
+   - or this is one of the top 2-3 queries by duration
+   - or this query represents a repeated costly pattern
+   Identify the top stages to inspect next:
+   - any stage 40%-50% or more of this query/job runtime
+   - otherwise top 2-3 stages by duration
+   - repeated short stages that fail, spill, or repeat the same shuffle pattern
+
+3. Operator inventory
    List the major operators in execution order:
    - FileScan
    - Project
@@ -673,7 +687,7 @@ Please produce:
    - Sort
    - WriteFiles
 
-3. Shuffle map
+4. Shuffle map
    Identify every Exchange and explain what caused it:
    - join
    - groupBy
@@ -683,7 +697,7 @@ Please produce:
    - sort / orderBy
    - write preparation
 
-4. Join and table-size inventory
+5. Join and table-size inventory
    Build a table with one row per important join.
    For each important join, capture:
    - left dataset
@@ -720,7 +734,7 @@ Please produce:
    - possible memory risk from broadcasting too much data
    - stats or table metadata missing
 
-5. Bottleneck hypotheses
+6. Bottleneck hypotheses
    For each expensive-looking operator or Exchange, state what Spark UI evidence should confirm or reject it:
    - long stage duration
    - high shuffle read/write
@@ -731,7 +745,7 @@ Please produce:
    - tiny-task scheduler overhead
    - large output write time
 
-6. Stage evidence checklist
+7. Stage evidence checklist
    Tell me exactly which Spark UI tabs to inspect next:
    - Jobs
    - Stages
@@ -740,7 +754,7 @@ Please produce:
    - Executors
    And what metrics to capture from each.
 
-7. Databricks optimization path
+8. Databricks optimization path
    For each bottleneck, propose the Databricks-side improvement category:
    - AQE partition coalescing
    - AQE skew join handling
@@ -753,7 +767,7 @@ Please produce:
    - reducing unnecessary sort
    - optimizing countDistinct or aggregation strategy
 
-8. Photon mapping
+9. Photon mapping
    Identify operators that may benefit from Photon:
    - scans
    - filters
@@ -768,14 +782,14 @@ Please produce:
    - opaque row-by-row transformations
    - manual salting/repartitioning that forces extra shuffles
 
-9. Prioritized findings
+10. Prioritized findings
    Rank bottlenecks by likely impact:
    - high
    - medium
    - low
    For each, give the current evidence, missing evidence, and recommended next investigation step.
 
-10. Migration story
+11. Migration story
    Summarize the current-state Spark execution pattern and the Databricks target-state pattern in plain language for a client-facing migration narrative.
 
 Important:
@@ -810,8 +824,12 @@ Tasks:
    - files read
    - scan time
    - broadcast size
-3. Open the stages linked to the longest SQL query.
-4. For each join-related stage, capture:
+3. Open the stages linked to the selected SQL query.
+4. Choose stages using this focus rule:
+   - if one stage is 40%-50% or more of the query/job runtime, start there
+   - if no single stage dominates, inspect the top 2-3 stages by duration
+   - include short repeated stages if they repeat, fail, spill, or show the same shuffle pattern
+5. For each selected join-related stage, capture:
    - stage id
    - duration
    - number of tasks
@@ -823,14 +841,14 @@ Tasks:
    - shuffle write size
    - memory spill
    - disk spill
-5. Map stage evidence back to joins in the physical plan:
+6. Map stage evidence back to joins in the physical plan:
    - BroadcastHashJoin
    - BroadcastExchange
    - ShuffledHashJoin
    - SortMergeJoin
    - Exchange nodes
-6. Mark any table size or join-side size that cannot be determined from Spark UI as pending.
-7. Recommend the next safest source for missing sizes:
+7. Mark any table size or join-side size that cannot be determined from Spark UI as pending.
+8. Recommend the next safest source for missing sizes:
    - Airflow logs
    - S3/object storage listing
    - Glue/Hive table stats
@@ -871,6 +889,10 @@ Context:
   - executor cores/memory =
   - dynamic allocation =
 - Physical plan operator or Exchange related to this stage, if known:
+- Reason this stage was selected:
+  - stage is 40%-50% or more of job/query runtime
+  - or one of top 2-3 stages by duration
+  - or repeated/failing/spilling pattern
 
 Summary Metrics:
 <paste Summary Metrics table here>
@@ -908,7 +930,19 @@ Please produce:
    - executor task distribution
    - executor shuffle distribution
 
-3. Skew decision
+3. Pattern diagnosis matrix
+   Classify the stage using these patterns:
+   - high max shuffle read + high max duration -> likely skew
+   - high max shuffle read + normal duration -> not necessarily a bottleneck
+   - normal max shuffle read + high max duration -> investigate GC, spill, fetch wait, scheduler delay, executor imbalance, or straggler behavior
+   - high max shuffle read + high spill + high duration -> skew plus memory pressure
+   - normal shuffle read + high spill + high duration -> memory pressure, not skew
+   - small shuffle read per task + many tasks + long stage -> too many small partitions / task-wave overhead
+   - large shuffle read per task + spill + long tasks -> too few/heavy partitions or large shuffle workload
+   - one executor has much higher task time/shuffle/spill -> executor imbalance, host issue, or skew concentrated on one executor
+   - all executors balanced but stage is slow -> workload design, partitioning, or operator cost is likely the bottleneck
+
+4. Skew decision
    Decide whether this stage is skewed.
    Use directional thresholds:
    - healthy: max is less than about 2x-3x median
@@ -916,7 +950,7 @@ Please produce:
    - likely skew: max is greater than about 5x-10x median
    Explain the decision.
 
-4. Partitioning decision
+5. Partitioning decision
    Decide whether this looks like:
    - too many small partitions
    - too few large partitions
@@ -924,7 +958,23 @@ Please produce:
    - cannot tell yet
    Consider number of tasks, shuffle read per task, stage duration, and available executor task slots.
 
-5. Executor balance decision
+6. Memory pressure decision
+   Decide whether this stage shows memory pressure.
+   Use these signals:
+   - GC time as a percentage of task duration
+   - memory spill
+   - disk spill
+   - peak execution memory, if provided
+   - spill or GC concentration on slow tasks
+   - executor failures, retries, or OOM evidence
+   Use directional thresholds:
+   - healthy: GC is less than about 5%-10% of task runtime and little/no spill
+   - watch closely: GC is about 10%-20% of task runtime or some spill appears
+   - likely memory pressure: GC is greater than about 20%-30% of task runtime with meaningful spill
+   - severe memory pressure: GC is greater than about 50% of task runtime, large disk spill, OOMs, or executor failures
+   Explain whether spill is normal for scale or a likely bottleneck.
+
+7. Executor balance decision
    Compare executors:
    - tasks per executor
    - total task time
@@ -933,7 +983,7 @@ Please produce:
    - failed/killed tasks
    Decide whether one executor or host is causing the bottleneck.
 
-6. Databricks optimization mapping
+8. Databricks optimization mapping
    Map the finding to possible Databricks improvements:
    - AQE partition coalescing
    - AQE skew join handling
@@ -945,7 +995,7 @@ Please produce:
    - increasing/decreasing shuffle partitions
    - executor sizing changes
 
-7. Next investigation step
+9. Next investigation step
    Tell me exactly what to inspect next:
    - another stage
    - task table sorted by duration
@@ -959,6 +1009,232 @@ Important:
 - Do not call a stage skewed just because it is long-running.
 - Do not call a stage over-partitioned unless per-task data is small and task-wave/scheduler overhead is plausible.
 - Do not claim Databricks will improve it without explaining which feature maps to the evidence.
+```
+
+## Skew Follow-Up Prompt
+
+Use this prompt when stage metrics suggest skew, then paste the relevant physical plan section:
+
+```text
+I found a Spark stage that appears skewed.
+
+Please investigate the likely skew source using the stage metrics and physical plan.
+
+Context:
+- Spark application name:
+- Spark application id:
+- SQL query id/name:
+- Job id:
+- Stage id:
+- Stage duration:
+- Runtime settings:
+  - spark.sql.adaptive.enabled =
+  - spark.sql.adaptive.skewJoin.enabled =
+  - spark.sql.shuffle.partitions =
+- Skew evidence:
+  - median task duration =
+  - max task duration =
+  - median shuffle read =
+  - max shuffle read =
+  - spill on slow tasks =
+
+Physical plan section:
+<paste relevant physical plan here>
+
+Please produce:
+
+1. Confirmed skew evidence
+   Summarize why this is or is not skew.
+
+2. Likely skew operator
+   Identify the Exchange, join, aggregation, repartition, sort, or write that likely produced the skewed stage.
+
+3. Likely skew keys
+   Identify candidate keys:
+   - join keys
+   - groupBy keys
+   - repartition keys
+   - sort keys
+   - null/default keys
+
+4. Data checks to run
+   Provide source-side checks for:
+   - top keys by count
+   - null key counts
+   - distinct key counts
+   - join-side row counts
+   - key overlap
+   - partition distribution
+
+5. Optimization options
+   Map findings to:
+   - AQE skew join handling
+   - salting
+   - broadcast join if one side is small
+   - repartition strategy
+   - filtering or reducing data earlier
+   - Delta layout/clustering
+   - code changes
+
+6. Databricks/Photon angle
+   Explain what Databricks can help with and what still needs data/code changes.
+
+Distinguish confirmed evidence from hypotheses. Do not recommend salting until the skew key is identified.
+```
+
+## Memory Pressure Follow-Up Prompt
+
+Use this prompt when stage metrics show high GC, memory spill, disk spill, or high peak execution memory:
+
+```text
+I found a Spark stage that appears memory-pressure bound.
+
+Please investigate the likely memory-pressure source using the stage metrics and physical plan.
+
+Context:
+- Spark application name:
+- Spark application id:
+- SQL query id/name:
+- Job id:
+- Stage id:
+- Stage duration:
+- Executor memory:
+- Executor cores:
+- Runtime settings:
+  - spark.sql.adaptive.enabled =
+  - spark.sql.shuffle.partitions =
+- Memory evidence:
+  - median task duration =
+  - max task duration =
+  - median GC time =
+  - max GC time =
+  - memory spill =
+  - disk spill =
+  - peak execution memory =
+  - executor failures / OOMs =
+
+Physical plan section:
+<paste relevant physical plan here>
+
+Please produce:
+
+1. Confirmed memory-pressure evidence
+   Calculate GC percentage when possible and classify severity.
+
+2. Likely memory-heavy operator
+   Identify whether the pressure is likely from:
+   - join
+   - broadcast
+   - aggregation
+   - countDistinct
+   - sort
+   - cache/persist
+   - write
+   - wide row projection
+
+3. Data checks to run
+   Provide checks for:
+   - join-side size
+   - broadcast-side size
+   - aggregation cardinality
+   - row width / selected columns
+   - shuffle size
+   - partition size
+   - cache/persist footprint
+
+4. Source-side fixes
+   Suggest options:
+   - reduce columns earlier
+   - filter earlier
+   - change join strategy
+   - increase partitions if tasks are too heavy
+   - avoid or change cache/persist
+   - reduce countDistinct pressure
+   - adjust executor sizing
+
+5. Databricks/Photon angle
+   Map possible improvements:
+   - AQE partitioning/skew handling
+   - Photon for supported joins/aggregations/sorts
+   - Delta layout/statistics
+   - executor sizing
+   - UDF/native-expression changes
+
+Distinguish normal large-scale spill from spill that actually explains stage duration or failures.
+```
+
+## Small Shuffle Partitions Follow-Up Prompt
+
+Use this prompt when a stage has many tasks, small per-task shuffle read, balanced executors, low GC/spill, and long wall-clock duration:
+
+```text
+I found a Spark stage that appears dominated by many small shuffle partitions or task-wave overhead.
+
+Please investigate the likely source using the stage metrics and physical plan.
+
+Context:
+- Spark application name:
+- Spark application id:
+- SQL query id/name:
+- Job id:
+- Stage id:
+- Stage duration:
+- Number of tasks:
+- Executor count:
+- Executor cores:
+- Approximate concurrent task slots:
+- Runtime settings:
+  - spark.sql.adaptive.enabled =
+  - spark.sql.shuffle.partitions =
+- Stage evidence:
+  - median task duration =
+  - max task duration =
+  - median shuffle read =
+  - max shuffle read =
+  - scheduler delay =
+  - shuffle fetch wait =
+  - peak execution memory =
+  - executor task distribution =
+
+Physical plan section:
+<paste relevant physical plan here>
+
+Please produce:
+
+1. Confirmed evidence
+   Explain why this is likely not skew, not memory pressure, and not executor imbalance.
+
+2. Task-wave estimate
+   Estimate task waves:
+   total tasks / approximate concurrent task slots.
+   Compare estimated waves * median task duration to observed stage duration.
+
+3. Likely Exchange/operator
+   Identify which Exchange, repartition, aggregation, join, sort, or count action created the small partitions.
+
+4. Current-platform options
+   Suggest options:
+   - reduce spark.sql.shuffle.partitions for this scale
+   - increase cluster parallelism
+   - avoid unnecessary repartition
+   - reduce repeated actions
+   - cache carefully if repeated actions are intentional
+
+5. Databricks optimization angle
+   Map to:
+   - AQE partition coalescing
+   - fewer task waves
+   - better default/adaptive shuffle partition sizing
+   - Photon only for supported operator execution, not task scheduling alone
+
+6. Next evidence
+   Tell me what to inspect next to confirm the operator/code path:
+   - physical plan Exchange id/operator
+   - SQL linked stages
+   - source code action line
+   - repeated job pattern
+
+Keep the conclusion tied to evidence. Do not call it scheduler delay unless Scheduler Delay metrics are actually high; task-wave overhead can happen even when per-task Scheduler Delay is low.
 ```
 
 ## Databricks Count Baseline Prompt
