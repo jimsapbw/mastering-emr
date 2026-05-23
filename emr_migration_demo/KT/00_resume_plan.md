@@ -696,6 +696,49 @@ Continue Step 12 Spark troubleshooting, not pipeline execution.
 4. Code/operator mapping:
    Learn how to map Job -> Stage -> SQL Query -> physical operator -> Scala code path.
    For this run, connect Stage 38 / SQL Query 8 back to the relevant Exchange, aggregate, join, or write operator.
+
+5. Small-load Databricks/Photon conclusion:
+   After code/operator mapping, classify each relevant operator for Databricks:
+     AQE partition coalescing
+     AQE skew handling
+     AQE join strategy / broadcast
+     Photon-friendly scans, projections, joins, aggregates, sorts, writes
+     less Photon-friendly Scala UDF projections
+   The small-load analysis is complete only after this conclusion is written.
+```
+
+Planned progression after the small-load troubleshooting pass:
+
+```text
+1. Finish the small-load troubleshooting journey first.
+   Do not jump to a bigger dataset until the small run is fully understood:
+     runtime configuration
+     longest job/query
+     bottleneck stage
+     skew check
+     memory/spill check
+     partition/task-wave check
+     DAG visualization decision
+     physical operator and code-path mapping
+     small-load Databricks/Photon conclusion
+
+2. Then move to a medium-load run.
+   Goal: collect a more realistic troubleshooting example where skew, memory pressure, or both may become visible.
+   Use the same Spark UI workflow and prompts, but expect larger shuffle sizes, longer task durations, and more meaningful spill/GC evidence.
+
+   Important distinction:
+     Small load completes the analysis pattern and small-load Photon story.
+     Medium load is still needed for stronger production-like evidence about skew, memory pressure, spill, and realistic Photon/AQE benefit.
+
+3. If medium data still does not naturally show skew or memory pressure, create a practical stress scenario.
+   Preferred options:
+     increase data scale
+     increase hot-key concentration
+     reduce available executor memory only for a controlled test
+     increase shuffle/aggregation pressure
+
+4. Keep the client-facing goal in mind.
+   The final workflow should let us paste runtime settings, physical plan, stage metrics, executor metrics, and optional table counts into prompts and quickly classify the likely bottleneck.
 ```
 
 Reference:
@@ -710,5 +753,5 @@ emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/emr_spark_troubleshooting_guide.md, KT/client_spark_ui_troubleshooting_plan.md, and KT/spark_troubleshooting_cheat_sheet.md. Resume Step 12 Spark troubleshooting from the small Step 3 BRBF run on cluster j-3S62AU5IR98MM, application application_1779541486316_0003. We already inspected Job 22 and Stage 38. Continue the troubleshooting journey from the 5:00 P.M. EST 2026-05-23 checkpoint: memory pressure examples/benchmarks, the too-many-small-shuffle-partitions explanation, DAG Visualization optionality, and Job/Stage/SQL/operator/code mapping. Keep updating the guide, client prompts, and cheat sheet so the final workflow supports quick copy/paste analysis in a client environment.
+Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/emr_spark_troubleshooting_guide.md, KT/client_spark_ui_troubleshooting_plan.md, and KT/spark_troubleshooting_cheat_sheet.md. Resume Step 12 Spark troubleshooting from the small Step 3 BRBF run on cluster j-3S62AU5IR98MM, application application_1779541486316_0003. We already inspected Job 22 and Stage 38. Continue the troubleshooting journey from the 5:00 P.M. EST 2026-05-23 checkpoint: memory pressure examples/benchmarks, the too-many-small-shuffle-partitions explanation, DAG Visualization optionality, Job/Stage/SQL/operator/code mapping, and the small-load Databricks/Photon conclusion. Finish the small-load troubleshooting pass first. After that, plan a medium-load run to look for more realistic skew, memory pressure, or both if practical. Keep updating the guide, client prompts, and cheat sheet so the final workflow supports quick copy/paste analysis in a client environment.
 ```

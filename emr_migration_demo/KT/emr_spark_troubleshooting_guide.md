@@ -28,13 +28,13 @@ Current demo cluster details:
 
 ```text
 Cluster name: itv-github-dev-cluster
-Cluster ID: j-37DIRU3WHU1C5
+Cluster ID: j-3S62AU5IR98MM
 Region: us-east-1
 EMR version: emr-7.13.0
 Spark version: 3.5.6
 Primary node public DNS: ec2-100-55-172-52.compute-1.amazonaws.com
 Log destination: s3://aws-logs-210570462212-us-east-1/elasticmapreduce/
-CloudWatch log group: /aws/emr/j-37DIRU3WHU1C5
+CloudWatch log group: /aws/emr/j-3S62AU5IR98MM
 ```
 
 In the AWS EMR console:
@@ -895,6 +895,52 @@ sort/orderBy
 distinct/dropDuplicates
 ```
 
+Use the physical plan after stage diagnosis, not only before it.
+
+The practical mapping flow is:
+
+```text
+1. Find the longest job or SQL query.
+2. Find the bottleneck stage inside that job/query.
+3. Return to the associated SQL physical plan.
+4. Look for the operator boundary that explains the stage:
+     Exchange
+     HashAggregate / SortAggregate
+     BroadcastHashJoin / ShuffledHashJoin / SortMergeJoin
+     Sort
+     WriteFiles
+5. Map that operator back to the code action or transformation.
+```
+
+For the Step 12 small BRBF run, use this current mapping target:
+
+```text
+Job 22
+-> SQL Query 8
+-> Stage 38
+-> physical plan operator around the 200-partition Exchange / aggregate path
+-> BrbfJob.scala action shown in the Spark UI job description
+```
+
+The goal is not just to say "Stage 38 is slow." The goal is to say:
+
+```text
+Stage 38 is slow because this specific operator/code path creates work with these symptoms.
+```
+
+Examples:
+
+```text
+Stage metrics show skew
+  -> find the join/aggregate Exchange and keys that created skew.
+
+Stage metrics show high GC/spill
+  -> find the join, aggregate, sort, cache, or wide-row operator creating memory pressure.
+
+Stage metrics show many small tasks and low spill
+  -> find the Exchange using too many shuffle partitions for the cluster's available task slots.
+```
+
 ### 6. Use Explain Plans From Code Or Shell
 
 Before running a job, use:
@@ -925,6 +971,96 @@ UDF projections
 ```
 
 This is useful when linking code changes to physical operators.
+
+## Completion Gate Before Scaling Up
+
+Before moving from one dataset size to a larger dataset size, finish one clean analysis loop.
+
+Use this gate for any scale transition, such as tiny to small, small to medium, or medium to a larger stress run.
+
+Confirm:
+
+```text
+1. Runtime configuration is captured.
+2. Longest job/query is identified.
+3. Bottleneck stage is identified.
+4. Stage metrics are classified:
+     skew or not skew
+     memory pressure or not memory pressure
+     too many small partitions or too few heavy partitions
+     executor imbalance or balanced executors
+     scheduler/fetch wait issue or not
+5. Bottleneck stage is mapped back to SQL physical operator and code path.
+6. Final output is validated after the run.
+7. The run conclusion is written in one short evidence summary.
+```
+
+Run conclusion format:
+
+```text
+Run:
+  application id:
+  EMR step id:
+  input scale:
+
+Runtime config:
+  AQE:
+  skew join handling:
+  shuffle partitions:
+  executor cores/memory:
+
+Main bottleneck:
+  job/query:
+  stage:
+  duration:
+  share of job/query runtime:
+
+Evidence:
+  shuffle read median/max:
+  duration median/max:
+  GC median/max:
+  spill:
+  scheduler delay:
+  shuffle fetch wait:
+  executor balance:
+
+Classification:
+  skew:
+  memory pressure:
+  partition sizing:
+  join/operator pressure:
+
+Likely source-platform issue:
+  ...
+
+Databricks migration angle:
+  AQE:
+  Photon:
+  Delta/statistics/layout:
+  code/UDF changes:
+```
+
+Current Step 12 small-run example:
+
+```text
+Stage 38 does not show obvious skew, memory pressure, scheduler delay, shuffle fetch wait, or executor imbalance.
+The likely issue is many small shuffle tasks from static 200 shuffle partitions on a small cluster.
+Databricks opportunity: AQE partition coalescing may reduce task waves; Photon may help supported joins/aggregates/sorts/scans but does not directly remove task scheduling overhead.
+```
+
+Only after the current-size loop is complete should the analysis move to a larger dataset.
+
+For the larger run, reuse the same workflow and intentionally look for stronger evidence:
+
+```text
+larger shuffle read/write
+larger task duration variance
+memory spill and disk spill
+higher GC percentage
+hot keys or skewed aggregates
+joins that should or should not broadcast
+operators that map to AQE, Photon, Delta layout, or code changes
+```
 
 ## What To Capture For The EMR Baseline
 
