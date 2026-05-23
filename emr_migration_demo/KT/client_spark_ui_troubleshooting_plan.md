@@ -604,114 +604,6 @@ Dataset         Path/table         Partition         Row count         Count sou
 Do not run new queries. Only use DAG code, task definitions, and existing logs unless explicitly approved.
 ```
 
-## Spark Stage Size Prompt
-
-Use this prompt when you have Spark History Server access and need to infer table or join-side sizes from SQL and stage metrics:
-
-```text
-I am investigating table sizes and join-side sizes from Spark History Server.
-
-Please help me use SQL and Stage metrics to populate a join/table-size inventory.
-
-Context:
-- Spark application name:
-- Spark application id:
-- Longest SQL query id/name:
-- Physical plan, if available:
-- Known input tables/paths:
-
-Tasks:
-
-1. Open the SQL tab and identify FileScan nodes for each input dataset.
-2. Capture any SQL metrics shown for scans, broadcasts, joins, aggregates, and writes:
-   - number of output rows
-   - data size
-   - files read
-   - scan time
-   - broadcast size
-3. Open the stages linked to the longest SQL query.
-4. For each join-related stage, capture:
-   - stage id
-   - duration
-   - number of tasks
-   - input records
-   - input size
-   - shuffle read records
-   - shuffle read size
-   - shuffle write records
-   - shuffle write size
-   - memory spill
-   - disk spill
-5. Map stage evidence back to joins in the physical plan:
-   - BroadcastHashJoin
-   - BroadcastExchange
-   - ShuffledHashJoin
-   - SortMergeJoin
-   - Exchange nodes
-6. Mark any table size or join-side size that cannot be determined from Spark UI as pending.
-7. Recommend the next safest source for missing sizes:
-   - Airflow logs
-   - S3/object storage listing
-   - Glue/Hive table stats
-   - Athena/source SQL count
-   - EMR notebook/spark-shell
-   - Databricks notebook baseline
-
-Return a table:
-
-Join                  Left size evidence       Right size evidence       Operator              Stage evidence              Missing size follow-up
-?                     ?                        ?                         ?                     ?                           ?
-
-Distinguish actual metrics from estimates. Do not infer exact row counts from bytes unless clearly labeled as an estimate.
-```
-
-## Databricks Count Baseline Prompt
-
-Use this prompt when source-side counts are unavailable or when creating the Databricks migration baseline:
-
-```text
-I am using Databricks to calculate table counts and join-key cardinalities for a Spark migration baseline.
-
-Please create a conservative notebook plan that reads the same source data and captures table-size evidence without changing the workload logic.
-
-Context:
-- Source paths or tables:
-- Partition filters:
-- Join keys:
-- Current source platform:
-- Databricks cluster/runtime:
-- Whether Photon is enabled:
-
-Tasks:
-
-1. Read each source table/path with the same partition filters used by the production job.
-2. For each dataset, calculate:
-   - row count
-   - input file count
-   - approximate data size if available
-   - approximate distinct count for join keys
-   - null count for join keys
-3. For each important join, produce:
-   - left row count
-   - right row count
-   - left join-key distinct count
-   - right join-key distinct count
-   - expected small side
-   - candidate broadcast side
-4. Label this as Databricks migration-baseline evidence, not source-platform runtime evidence.
-5. Recommend which counts should later be validated against source Airflow logs, Spark History metrics, or audit tables.
-
-Example output table:
-
-Dataset         Partition/filter       Rows       Files       Approx bytes       Join key        Distinct keys       Null keys
-?               ?                      ?          ?           ?                  ?               ?                   ?
-
-Join            Left rows       Right rows       Candidate broadcast side       Reason       Needs source validation?
-?               ?               ?                ?                              ?            yes/no
-
-Do not claim performance improvement from these counts alone. Use them to support join strategy and broadcast/AQE investigation.
-```
-
 ## Physical Plan Bottleneck Prompt
 
 Use this prompt after finding the longest SQL/DataFrame query in Spark UI or Spark History Server and copying its physical plan:
@@ -891,4 +783,227 @@ Important:
 - Do not assume AQE fixes all skew; tie claims to stage/task evidence.
 - Distinguish confirmed evidence from hypotheses.
 - Keep source-platform baseline and Databricks optimized target separate.
+```
+
+## Spark Stage Size Prompt
+
+Use this prompt when you have Spark History Server access and need to infer table or join-side sizes from SQL and stage metrics:
+
+```text
+I am investigating table sizes and join-side sizes from Spark History Server.
+
+Please help me use SQL and Stage metrics to populate a join/table-size inventory.
+
+Context:
+- Spark application name:
+- Spark application id:
+- Longest SQL query id/name:
+- Physical plan, if available:
+- Known input tables/paths:
+
+Tasks:
+
+1. Open the SQL tab and identify FileScan nodes for each input dataset.
+2. Capture any SQL metrics shown for scans, broadcasts, joins, aggregates, and writes:
+   - number of output rows
+   - data size
+   - files read
+   - scan time
+   - broadcast size
+3. Open the stages linked to the longest SQL query.
+4. For each join-related stage, capture:
+   - stage id
+   - duration
+   - number of tasks
+   - input records
+   - input size
+   - shuffle read records
+   - shuffle read size
+   - shuffle write records
+   - shuffle write size
+   - memory spill
+   - disk spill
+5. Map stage evidence back to joins in the physical plan:
+   - BroadcastHashJoin
+   - BroadcastExchange
+   - ShuffledHashJoin
+   - SortMergeJoin
+   - Exchange nodes
+6. Mark any table size or join-side size that cannot be determined from Spark UI as pending.
+7. Recommend the next safest source for missing sizes:
+   - Airflow logs
+   - S3/object storage listing
+   - Glue/Hive table stats
+   - Athena/source SQL count
+   - EMR notebook/spark-shell
+   - Databricks notebook baseline
+
+Return a table:
+
+Join                  Left size evidence       Right size evidence       Operator              Stage evidence              Missing size follow-up
+?                     ?                        ?                         ?                     ?                           ?
+
+Distinguish actual metrics from estimates. Do not infer exact row counts from bytes unless clearly labeled as an estimate.
+```
+
+## Bottleneck Stage Metrics Prompt
+
+Use this prompt after identifying a long-running stage and copying its Summary Metrics plus Aggregated Metrics by Executor:
+
+```text
+I am analyzing a suspected bottleneck Spark stage from Spark UI / Spark History Server.
+
+Please classify the bottleneck using the stage Summary Metrics and Aggregated Metrics by Executor.
+
+Context:
+- Spark application name:
+- Spark application id:
+- SQL query id/name:
+- Job id:
+- Stage id:
+- Stage description:
+- Total stage duration:
+- Number of tasks:
+- Runtime settings, if known:
+  - spark.sql.adaptive.enabled =
+  - spark.sql.adaptive.skewJoin.enabled =
+  - spark.sql.shuffle.partitions =
+  - executor cores/memory =
+  - dynamic allocation =
+- Physical plan operator or Exchange related to this stage, if known:
+
+Summary Metrics:
+<paste Summary Metrics table here>
+
+Aggregated Metrics by Executor:
+<paste Aggregated Metrics by Executor table here>
+
+Please produce:
+
+1. Stage classification
+   Classify the stage as one or more of:
+   - data skew
+   - too many small shuffle partitions
+   - too few/heavy shuffle partitions
+   - memory pressure / spill
+   - GC pressure
+   - executor imbalance
+   - scheduler/task-wave overhead
+   - expensive join
+   - expensive aggregation/countDistinct
+   - expensive sort
+   - expensive write
+
+2. Evidence table
+   Summarize the evidence:
+   - median task duration
+   - max task duration
+   - max/median duration ratio
+   - median shuffle read
+   - max shuffle read
+   - max/median shuffle ratio
+   - memory spill
+   - disk spill
+   - GC time
+   - executor task distribution
+   - executor shuffle distribution
+
+3. Skew decision
+   Decide whether this stage is skewed.
+   Use directional thresholds:
+   - healthy: max is less than about 2x-3x median
+   - watch closely: max is about 3x-5x median
+   - likely skew: max is greater than about 5x-10x median
+   Explain the decision.
+
+4. Partitioning decision
+   Decide whether this looks like:
+   - too many small partitions
+   - too few large partitions
+   - appropriate partitioning
+   - cannot tell yet
+   Consider number of tasks, shuffle read per task, stage duration, and available executor task slots.
+
+5. Executor balance decision
+   Compare executors:
+   - tasks per executor
+   - total task time
+   - shuffle read per executor
+   - spill per executor
+   - failed/killed tasks
+   Decide whether one executor or host is causing the bottleneck.
+
+6. Databricks optimization mapping
+   Map the finding to possible Databricks improvements:
+   - AQE partition coalescing
+   - AQE skew join handling
+   - Photon joins/aggregations/sorts/scans
+   - better table statistics
+   - Delta layout/file-size tuning
+   - broadcast tuning
+   - reducing manual repartitioning
+   - increasing/decreasing shuffle partitions
+   - executor sizing changes
+
+7. Next investigation step
+   Tell me exactly what to inspect next:
+   - another stage
+   - task table sorted by duration
+   - SQL physical plan operator
+   - Executors tab
+   - storage/table counts
+   - Airflow logs
+
+Important:
+- Distinguish confirmed evidence from hypotheses.
+- Do not call a stage skewed just because it is long-running.
+- Do not call a stage over-partitioned unless per-task data is small and task-wave/scheduler overhead is plausible.
+- Do not claim Databricks will improve it without explaining which feature maps to the evidence.
+```
+
+## Databricks Count Baseline Prompt
+
+Use this prompt when source-side counts are unavailable or when creating the Databricks migration baseline:
+
+```text
+I am using Databricks to calculate table counts and join-key cardinalities for a Spark migration baseline.
+
+Please create a conservative notebook plan that reads the same source data and captures table-size evidence without changing the workload logic.
+
+Context:
+- Source paths or tables:
+- Partition filters:
+- Join keys:
+- Current source platform:
+- Databricks cluster/runtime:
+- Whether Photon is enabled:
+
+Tasks:
+
+1. Read each source table/path with the same partition filters used by the production job.
+2. For each dataset, calculate:
+   - row count
+   - input file count
+   - approximate data size if available
+   - approximate distinct count for join keys
+   - null count for join keys
+3. For each important join, produce:
+   - left row count
+   - right row count
+   - left join-key distinct count
+   - right join-key distinct count
+   - expected small side
+   - candidate broadcast side
+4. Label this as Databricks migration-baseline evidence, not source-platform runtime evidence.
+5. Recommend which counts should later be validated against source Airflow logs, Spark History metrics, or audit tables.
+
+Example output table:
+
+Dataset         Partition/filter       Rows       Files       Approx bytes       Join key        Distinct keys       Null keys
+?               ?                      ?          ?           ?                  ?               ?                   ?
+
+Join            Left rows       Right rows       Candidate broadcast side       Reason       Needs source validation?
+?               ?               ?                ?                              ?            yes/no
+
+Do not claim performance improvement from these counts alone. Use them to support join strategy and broadcast/AQE investigation.
 ```

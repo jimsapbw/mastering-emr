@@ -434,6 +434,72 @@ Many tiny tasks -> too many small partitions/files
 Very large tasks -> under-partitioning or skew
 ```
 
+This is where we apply the `spark.sql.shuffle.partitions` check from Step 1:
+
+```text
+too few partitions -> heavy tasks, high shuffle per task, long duration, spill
+too many partitions -> many tiny tasks, low data per task, scheduler overhead
+skew -> median task is reasonable, but max task duration or max shuffle read is much larger
+```
+
+Second-pass metrics:
+
+Start with the basic metrics first:
+
+```text
+duration
+GC time
+shuffle read size / records
+shuffle write size / records
+memory spill
+disk spill
+executor balance
+```
+
+If the bottleneck is still unclear, enable additional task metrics:
+
+```text
+Scheduler Delay:
+  useful when tasks are tiny but the stage is slow; supports scheduler/task-wave overhead.
+
+Shuffle Read Fetch Wait Time:
+  useful when shuffle read is high; shows time spent waiting for shuffle blocks.
+
+Shuffle Remote Reads:
+  useful with fetch wait time; high remote reads can explain slow shuffle stages.
+
+Shuffle Write Time:
+  useful when a stage writes a large shuffle.
+
+Peak Execution Memory:
+  useful for joins, aggregations, memory pressure, and spill investigation.
+
+Task Deserialization Time:
+  useful if task startup or large serialized closures are suspected.
+
+Result Serialization Time / Getting Result Time:
+  useful when collecting large results to the driver; usually lower priority for write/count jobs.
+
+OnHeap / OffHeap / Direct / Mapped memory metrics:
+  useful for deeper memory troubleshooting when GC, spill, or native memory pressure is visible.
+```
+
+For top bottleneck stages, a practical expanded capture set is:
+
+```text
+Duration
+Scheduler Delay
+GC Time
+Shuffle Read Size / Records
+Shuffle Read Fetch Wait Time
+Shuffle Remote Reads
+Shuffle Write Size / Records
+Shuffle Write Time
+Memory Spill
+Disk Spill
+Peak Execution Memory
+```
+
 ### 5. Diagnose Skew
 
 In the Stages tab, open a long-running stage and inspect task durations.
@@ -455,6 +521,101 @@ shuffle read per task
 records read per task
 spill per task
 ```
+
+First skew check:
+
+```text
+Compare median shuffle read per task to max shuffle read per task.
+Compare median task duration to max task duration.
+```
+
+If max is close to median, the stage is probably not skewed.
+
+If max is many times larger than median, the stage may be skewed.
+
+Actual demo example from Step 12, Job 22, Stage 38:
+
+```text
+median task duration: 4 s
+max task duration:    20 s
+median shuffle read:  2 MiB
+max shuffle read:     3.1 MiB
+executor split:       100 tasks / 100 tasks
+```
+
+Interpretation:
+
+```text
+Not obvious data skew.
+Shuffle read is balanced.
+Executors are balanced.
+The bottleneck is more likely many small shuffle partitions running in waves.
+```
+
+Hypothetical skew example:
+
+```text
+median task duration: 4 s
+max task duration:    8 min
+median shuffle read:  2 MiB
+max shuffle read:     800 MiB
+```
+
+Interpretation:
+
+```text
+Likely data skew.
+A few partitions are much larger than the rest.
+The stage waits for the slowest tasks.
+Investigate join keys, hot keys, skewed groups, AQE skew handling, salting, or data layout.
+```
+
+Practical skew benchmarks:
+
+```text
+Healthy or acceptable:
+  max shuffle read is less than about 2x-3x median
+  max task duration is less than about 2x-3x median
+  no meaningful spill
+
+Watch closely:
+  max shuffle read is about 3x-5x median
+  max task duration is about 3x-5x median
+  some spill or executor imbalance appears
+
+Likely skew:
+  max shuffle read is greater than about 5x-10x median
+  max task duration is greater than about 5x-10x median
+  a few tasks dominate stage runtime
+  slow tasks read far more records or spill more than the rest
+
+Severe skew:
+  median task reads MiB-scale data, max task reads GiB-scale data
+  median task runs seconds, max task runs minutes or hours
+  stage progress stalls near the end
+```
+
+For large client workloads with hundreds of GB or TBs:
+
+```text
+Do not judge skew by absolute size alone.
+Judge skew by comparing max vs median and by looking at spill and task duration.
+
+Example not necessarily skew at large scale:
+  median shuffle read: 800 MiB
+  max shuffle read:    1.4 GiB
+  tasks are similarly long
+  little or no spill
+
+Example likely skew at large scale:
+  median shuffle read: 800 MiB
+  max shuffle read:    40 GiB
+  median duration:     2 min
+  max duration:        45 min
+  high disk spill on slow tasks
+```
+
+Use these as directional thresholds, not hard rules. Cluster size, executor memory, file format, compression, join type, and storage performance all affect what is acceptable.
 
 This is especially important for the main BRBF job after high-frequency users and hot contextual keys are joined.
 
