@@ -161,7 +161,7 @@ Latest GitHub backup:
 ```text
 Repository: https://github.com/jimsapbw/mastering-emr/tree/main/emr_migration_demo
 Branch: main
-Commit: 900df9d Add BRBF job and migration KT docs
+Commit: a81e5c1 Add Spark troubleshooting cheat sheet and follow-up prompts
 ```
 
 This latest commit includes:
@@ -180,6 +180,9 @@ Databricks post-migration plan
 Databricks Photon best practices
 Future migration stories
 Updated resume plan and KT index
+Client Spark UI troubleshooting plan
+Spark troubleshooting cheat sheet
+Stage-level skew, memory pressure, and partitioning prompts
 ```
 
 The commit was created from:
@@ -440,6 +443,18 @@ Step 12 zip backup:
 s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-22_step12_small_run_complete.zip
 ```
 
+Latest Step 12 troubleshooting playbook zip backup:
+
+```text
+s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-23_spark_troubleshooting_playbook_a81e5c1.zip
+```
+
+Latest explorable S3 folder backup:
+
+```text
+s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo/
+```
+
 Download zip backup:
 
 ```bash
@@ -546,11 +561,11 @@ Current Step 12 status:
 small S3 prefix layout: PASS
 small data generation: PASS
 small raw data validation: PASS
-small EMR Step 1 FeatureLogConverter: COMPLETED
-small EMR Step 2 EligibleUserDataLogConverter: COMPLETED
-small EMR Step 3 BrbfJob: COMPLETED
-small final output validation: NEXT
-small Spark troubleshooting walkthrough: NEXT
+small EMR Step 1 FeatureLogConverter: COMPLETED on new cluster
+small EMR Step 2 EligibleUserDataLogConverter: COMPLETED on new cluster
+small EMR Step 3 BrbfJob: COMPLETED on new cluster
+small final output validation: PASS from prior small run; re-check if needed
+small Spark troubleshooting walkthrough: IN PROGRESS
 ```
 
 Small data prefix:
@@ -559,7 +574,7 @@ Small data prefix:
 s3://aigithub-emr-2026/emr-migration-demo-small/
 ```
 
-Small EMR step IDs:
+Original small EMR step IDs:
 
 ```text
 Step 1 ID: s-068112428LZKPF5DOUMU
@@ -567,28 +582,120 @@ Step 2 ID: s-0730235RZAH2SJX8RGR
 Step 3 ID: s-024954934CXKODACJN4N
 ```
 
-Live Spark/YARN application observed for Step 3:
+New troubleshooting cluster:
 
 ```text
-application_1779457953547_0015
-name=emr-migration-brbf-before-dag
-tag=s-024954934cxkodacjn4n
-state=FINISHED/SUCCEEDED
+Cluster name: itv-github-dev-cluster
+Cluster ID: j-3S62AU5IR98MM
+EMR release: emr-7.13.0
+Spark: 3.5.6
+Primary DNS: ec2-100-55-172-52.compute-1.amazonaws.com
+Step concurrency: 1
+Status during troubleshooting: Waiting
 ```
 
-Next resume action:
+Small Step 3 application used for Spark History Server analysis:
 
 ```text
-Resume after the completed small BRBF run.
-Validate the small final output under:
-  s3://aigithub-emr-2026/emr-migration-demo-small/final/brbf/year=2026/month=05/day=21/hour=10/
-Then use KT/emr_spark_troubleshooting_guide.md to walk through Spark History Server:
-  Jobs
-  Stages
-  SQL
-  Executors
-  Environment
-Capture bottlenecks, shuffle, skew, spill, and physical operators.
+Application ID: application_1779541486316_0003
+Application name: emr-migration-brbf-before-dag
+EMR step ID: s-10425111SB3XON8UMCDV
+Cluster ID: j-3S62AU5IR98MM
+State: FINISHED/SUCCEEDED
+```
+
+Runtime configuration confirmed for the small Step 3 troubleshooting run:
+
+```text
+spark.sql.adaptive.enabled=false
+spark.sql.adaptive.skewJoin.enabled=false
+spark.sql.shuffle.partitions=200
+spark.default.parallelism=200
+spark.dynamicAllocation.enabled=true
+spark.executor.cores=4
+spark.executor.memory=18971M
+spark.driver.memory=2048M
+```
+
+The explicit `spark.sql.autoBroadcastJoinThreshold` value was not visible in Spark Properties, which is normal when the default is used. Broadcast behavior was still confirmed from the SQL physical plan because multiple `BroadcastHashJoin` and `BroadcastExchange` operators appeared.
+
+Current Spark History Server learning checkpoint:
+
+```text
+Longest job inspected: Job 22
+Job duration: 1.9 min
+Associated SQL Query: 8
+Longest stage: Stage 38
+Stage 38 duration: 1.6 min
+Stage 38 share of Job 22: roughly 84%
+Stage 38 task count: 200
+Stage 38 shuffle read: 398.4 MiB / 1,500,000 records
+Stage 38 shuffle write: 9.8 KiB / 200 records
+```
+
+Stage 38 diagnosis so far:
+
+```text
+Not obvious skew:
+  median shuffle read = 2 MiB
+  max shuffle read = 3.1 MiB
+
+Not obvious memory pressure:
+  median task duration = 4 s
+  median GC time = 50 ms
+  max task duration = 20 s
+  max GC time = 0.6 s
+  peak execution memory = 68 MiB
+  executor memory from Environment = 18971M
+
+Not obvious shuffle fetch/network issue:
+  median shuffle fetch wait = 1 ms
+  max shuffle fetch wait = 14 ms
+
+Not obvious scheduler delay:
+  median scheduler delay = 3 ms
+  max scheduler delay = 19 ms
+
+Executor balance looked healthy:
+  Executor 1 = 100 tasks, 199.2 MiB shuffle read, 6.5 min task time
+  Executor 2 = 100 tasks, 199.2 MiB shuffle read, 6.5 min task time
+
+Likely current hypothesis:
+  too many small shuffle partitions / task-wave overhead for available parallelism.
+  With about 8 task slots and 200 shuffle tasks, Spark needs about 25 task waves.
+```
+
+Important physical plan findings from the longest query:
+
+```text
+BroadcastHashJoin and BroadcastExchange are present for small joins.
+ShuffledHashJoin is present for larger joins.
+Many Exchange nodes use 200 partitions.
+The plan includes UDF Project nodes before joins.
+The plan includes HashAggregate and count(distinct bid_request_id).
+The plan ends with Union, range partitioning, Sort, and WriteFiles to Parquet snappy.
+```
+
+Resume action as of 5:00 P.M. EST on 2026-05-23:
+
+```text
+Continue Step 12 Spark troubleshooting, not pipeline execution.
+
+1. Memory pressure:
+   Continue learning how to diagnose GC, memory spill, disk spill, and peak execution memory.
+   Keep real Stage 38 example, hypothetical bad examples, and large-data benchmarks in the guide.
+
+2. Small shuffle partitions:
+   Explain how we concluded Stage 38 likely has too many small shuffle partitions.
+   Use examples and task-wave math so the reasoning is easy to repeat.
+
+3. DAG visualization:
+   Decide when DAG Visualization is useful versus optional.
+   Treat SQL physical plan and stage metrics as primary evidence unless the DAG view adds clarity.
+
+4. Code/operator mapping:
+   Learn how to map Job -> Stage -> SQL Query -> physical operator -> Scala code path.
+   For this run, connect Stage 38 / SQL Query 8 back to the relevant Exchange, aggregate, join, or write operator.
 ```
 
 Reference:
@@ -603,5 +710,5 @@ emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, and KT/emr_spark_troubleshooting_guide.md. Resume Step 12 after the small EMR pipeline completed. Validate the small final output for s3://aigithub-emr-2026/emr-migration-demo-small/final/brbf/year=2026/month=05/day=21/hour=10/, then walk through Spark History Server step by step to identify jobs, stages, SQL operators, shuffle, skew, spill, and bottlenecks.
+Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/emr_spark_troubleshooting_guide.md, KT/client_spark_ui_troubleshooting_plan.md, and KT/spark_troubleshooting_cheat_sheet.md. Resume Step 12 Spark troubleshooting from the small Step 3 BRBF run on cluster j-3S62AU5IR98MM, application application_1779541486316_0003. We already inspected Job 22 and Stage 38. Continue the troubleshooting journey from the 5:00 P.M. EST 2026-05-23 checkpoint: memory pressure examples/benchmarks, the too-many-small-shuffle-partitions explanation, DAG Visualization optionality, and Job/Stage/SQL/operator/code mapping. Keep updating the guide, client prompts, and cheat sheet so the final workflow supports quick copy/paste analysis in a client environment.
 ```
