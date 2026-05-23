@@ -124,19 +124,263 @@ Spark UI -> Environment
 
 Confirm key baseline settings such as:
 
+Important for this migration analysis:
+
 ```text
 spark.sql.adaptive.enabled
 spark.sql.adaptive.skewJoin.enabled
 spark.sql.shuffle.partitions
-spark.default.parallelism
 spark.sql.autoBroadcastJoinThreshold
+```
+
+Nice to have for supporting context:
+
+```text
+spark.default.parallelism
 spark.serializer
 spark.sql.parquet.compression.codec
 ```
 
 For the EMR baseline, we expect AQE to be disabled or not relied on when running the final before-DAG workload.
 
-### 2. Find The Longest Job
+Why the important settings matter:
+
+```text
+spark.sql.adaptive.enabled
+  If false, Spark is using a more static plan. This gives Databricks an immediate optimization opening with AQE.
+
+spark.sql.adaptive.skewJoin.enabled
+  If false, Spark is not automatically splitting skewed shuffle partitions. Skew symptoms become stronger migration evidence.
+
+spark.sql.shuffle.partitions
+  Controls default SQL shuffle parallelism for joins, groupBy, distinct, dropDuplicates, repartition, sort, and countDistinct.
+
+spark.sql.autoBroadcastJoinThreshold
+  Helps explain why Spark chose BroadcastHashJoin versus SortMergeJoin.
+```
+
+Broadcast join investigation:
+
+```text
+If small dimension tables are joined with large fact tables but the physical plan shows SortMergeJoin or ShuffledHashJoin, Spark may be doing unnecessary shuffle work.
+
+In Databricks, AQE plus table statistics may allow BroadcastHashJoin for safe small-side joins, reducing Exchange stages and shuffle read/write.
+
+If spark.sql.autoBroadcastJoinThreshold is not visible, use the physical plan as the source of truth:
+  BroadcastHashJoin / BroadcastExchange means Spark broadcasted a join side.
+  SortMergeJoin or ShuffledHashJoin with Exchanges on both sides may indicate a broadcast opportunity.
+```
+
+How to interpret shuffle partition symptoms:
+
+```text
+Too few shuffle partitions:
+  fewer, heavier tasks
+  large shuffle read per task
+  long task durations
+  memory or disk spill
+
+Too many shuffle partitions:
+  many tiny tasks
+  small shuffle read per task
+  scheduler overhead
+  possible small output files
+
+Skew:
+  most tasks finish quickly
+  a few tasks take much longer
+  max task duration is far above median task duration
+  one or a few tasks read much more shuffle data than the rest
+```
+
+`spark.default.parallelism` is still useful to record, but for DataFrame-heavy Spark SQL workloads, `spark.sql.shuffle.partitions` is usually the more important first setting.
+
+How to find these settings:
+
+```text
+1. Open Spark History Server.
+2. Open the target Spark application.
+3. Go to Environment -> Spark Properties.
+4. Search for the setting name.
+5. If a setting is not shown in Environment, open the SQL tab.
+6. Click the longest SQL/DataFrame query.
+7. Look for runtime SQL configs and physical plan details in the query page.
+```
+
+In this demo, some settings are set inside `BrbfJob.scala` after the Spark session starts:
+
+```scala
+spark.conf.set("spark.sql.adaptive.enabled", "false")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "false")
+spark.conf.set("spark.sql.shuffle.partitions", "200")
+spark.conf.set("spark.default.parallelism", "200")
+```
+
+These may not always appear in the Environment tab. If they are missing there, verify them from the SQL query details and stage behavior.
+
+Helpful cross-checks:
+
+```text
+AQE disabled:
+  SQL physical plan should not show AdaptiveSparkPlan.
+
+AQE enabled:
+  SQL physical plan often shows AdaptiveSparkPlan.
+
+shuffle.partitions = 200:
+  shuffle-heavy SQL stages often show around 200 tasks.
+
+skewJoin disabled:
+  skewed task distributions are not being automatically split by Spark AQE skew handling.
+```
+
+Capture the result in this format:
+
+```text
+Setting                                      Value / Evidence
+spark.sql.adaptive.enabled                   false
+spark.sql.adaptive.skewJoin.enabled          false
+spark.sql.shuffle.partitions                 200
+spark.default.parallelism                    200
+spark.sql.autoBroadcastJoinThreshold         not shown / default / configured value
+Evidence source                              SQL query details, Environment tab, or stage task count
+```
+
+### 2. Build Join And Table Size Inventory
+
+Before diagnosing join bottlenecks, build an inventory of the important joins and the approximate size of each side.
+
+Capture:
+
+```text
+join name or code location
+left dataset
+right dataset
+left row count
+right row count
+left input size
+right input size
+join keys
+join type
+physical join operator
+broadcasted side, if any
+Exchange on left side
+Exchange on right side
+shuffle read/write in related stage
+spill in related stage
+```
+
+Useful sources:
+
+```text
+Spark SQL physical plan:
+  FileScan nodes
+  BroadcastExchange
+  BroadcastHashJoin
+  ShuffledHashJoin
+  SortMergeJoin
+  Exchange nodes
+
+Spark UI Stages:
+  input size
+  shuffle read/write
+  task count
+  memory spill
+  disk spill
+
+Storage or table metadata:
+  S3 file sizes
+  table statistics
+  partition counts
+  row counts from validation jobs
+```
+
+How to get table counts and sizes:
+
+Preferred current-state sources:
+
+```text
+Airflow DAG and task logs:
+  Look for validation tasks, audit writes, printed row counts, source counts, output counts, and reconciliation checks.
+
+Spark History Server SQL metrics:
+  Look for FileScan metrics, output rows, scan size, broadcast size, and records read from the actual run.
+
+Spark History Server stage metrics:
+  Look for input records, input size, shuffle read records, shuffle read size, output records, and output size.
+```
+
+Useful source-system options if available:
+
+```text
+S3 or object storage listing:
+  Get total bytes and file counts for exact input partitions.
+
+Glue/Hive metastore:
+  Get table locations, partition lists, and any available table or partition statistics.
+
+Athena or source SQL:
+  Run count queries and approximate distinct counts for join keys, if approved.
+
+EMR notebook, spark-shell, or attached source cluster:
+  Read the exact partition and run count or distinct-count checks, if approved.
+```
+
+Fallback migration-baseline option:
+
+```text
+Databricks notebook:
+  Read the same source paths and calculate counts, file sizes, and join-key cardinalities.
+  Treat this as migration-baseline evidence, not the original source-platform runtime evidence.
+```
+
+Example checks:
+
+```bash
+aws s3 ls s3://bucket/path/to/table/partition/ --recursive --summarize
+```
+
+```sql
+SELECT count(*) FROM db.table WHERE ds = '<partition>';
+SELECT approx_distinct(join_key) FROM db.table WHERE ds = '<partition>';
+```
+
+```scala
+val df = spark.read.parquet("s3://bucket/path/to/table/partition/")
+df.count()
+df.select("join_key").distinct().count()
+df.inputFiles.length
+```
+
+Interpretation:
+
+```text
+Small right side + BroadcastHashJoin:
+  broadcast is happening as expected.
+
+Small right side + SortMergeJoin/ShuffledHashJoin + Exchanges:
+  possible broadcast/AQE/statistics opportunity.
+
+Large side broadcasted:
+  possible executor memory pressure risk.
+
+Missing table statistics:
+  optimizer may choose conservative shuffle joins.
+
+UDF/filter before join:
+  optimizer may have poor size estimates or reduced visibility.
+```
+
+For the migration story, this inventory helps separate:
+
+```text
+joins that already behave well on EMR
+joins that may benefit from Databricks AQE and better stats
+joins that may benefit from Photon execution
+joins that need code or layout changes
+```
+
+### 3. Find The Longest Job
 
 Go to:
 
@@ -157,7 +401,7 @@ For our converters, `count()` and `write` actions create Spark jobs.
 
 For the main BRBF job, the final write will likely trigger the heaviest work.
 
-### 3. Find Expensive Stages
+### 4. Find Expensive Stages
 
 Go to:
 
@@ -190,7 +434,7 @@ Many tiny tasks -> too many small partitions/files
 Very large tasks -> under-partitioning or skew
 ```
 
-### 4. Diagnose Skew
+### 5. Diagnose Skew
 
 In the Stages tab, open a long-running stage and inspect task durations.
 
@@ -214,7 +458,7 @@ spill per task
 
 This is especially important for the main BRBF job after high-frequency users and hot contextual keys are joined.
 
-### 5. Identify Operators
+### 6. Identify Operators
 
 Go to:
 
@@ -260,7 +504,7 @@ sort/orderBy
 distinct/dropDuplicates
 ```
 
-### 6. Use Explain Plans From Code Or Shell
+### 7. Use Explain Plans From Code Or Shell
 
 Before running a job, use:
 
