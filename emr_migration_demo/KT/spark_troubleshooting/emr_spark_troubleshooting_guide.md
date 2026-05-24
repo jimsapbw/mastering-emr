@@ -1742,6 +1742,26 @@ Submit-time --conf values can override those defaults.
 Rebuild and upload the JAR before rerunning Step 3, or the old hard-coded behavior may still be in S3.
 ```
 
+New-cluster rerun guardrails:
+
+```text
+1. Verify AWS credentials before running infrastructure or S3 commands.
+2. Verify Maven exists before rebuilding the JAR.
+3. Rebuild and upload the JAR from the current source.
+4. Create or select the larger-disk replacement cluster.
+5. Rerun only medium Step 3 first.
+6. Keep medium Steps 1 and 2 outputs as the prepared inputs.
+7. Capture the new step id and Spark application id immediately.
+8. If the rerun fails, preserve the first root-cause error before tuning again.
+```
+
+Preflight commands:
+
+```bash
+aws sts get-caller-identity --region us-east-1
+mvn -version
+```
+
 If a new cluster is not possible immediately:
 
 ```text
@@ -1901,6 +1921,53 @@ EMR baseline:
 
 Databricks target:
   Native expressions + AQE + Photon-friendly joins/aggregates/scans + Delta layout
+```
+
+Light-medium demo conclusion:
+
+```text
+The completed light-medium run is the preferred client demo load for the
+replacement EMR cluster.
+
+app id:
+  application_1779641349593_0009
+step id:
+  s-06984631PV9G98A51OTN
+runtime:
+  BRBF Step 3 about 12 minutes
+
+dominant Spark UI evidence:
+  Query 8 / count at BrbfJob.scala:80 ran about 7.5 minutes
+  Stage 63 ran about 7.1 minutes
+  Stage 63 had 400 tasks and 1101.9 MiB / 4,000,000 shuffle records
+  task duration spread was median 95 ms, p75 21 s, max 1.5 min
+
+operator finding:
+  feature-log ShuffledHashJoin expands the joined path from about 3M rows to
+  602.4M rows
+
+code mapping:
+  BrbfJob.scala:80 triggers joined.count()
+  BrbfJob.scala:51-78 builds and persists joined
+  BrbfJob.scala:57-62 is the featureLog join on user_id_hash/contextual_id
+  FeatureLogConverter.scala:38 deduplicates feature_log by feature_event_id,
+  not by the BRBF join key
+
+classification:
+  feature-log join cardinality/fanout with Stage 63 stragglers
+
+Databricks translation:
+  Photon can help native scans, joins, aggregates, sorts, and writes.
+  AQE/skew handling may help if key-level skew is confirmed.
+  Delta stats/layout can help planning, pruning, and file sizing.
+  However, none of those remove a 602.4M-row fanout if the join semantics
+  intentionally create it.
+
+Recommendation:
+  Validate whether fanout is business-expected.
+  If accidental, correct feature_log join grain before tuning.
+  If intentional, keep the fanout and optimize layout, execution, and repeated
+  actions over the expanded DataFrame.
 ```
 
 ## Key Questions To Answer During Analysis

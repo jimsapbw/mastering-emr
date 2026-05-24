@@ -627,8 +627,8 @@ small EMR Step 1 FeatureLogConverter: COMPLETED on new cluster
 small EMR Step 2 EligibleUserDataLogConverter: COMPLETED on new cluster
 small EMR Step 3 BrbfJob: COMPLETED on new cluster
 small final output validation: PASS from prior small run; re-check if needed
-small Spark troubleshooting walkthrough: IN PROGRESS
-medium controlled baseline plan: IN PROGRESS
+small Spark troubleshooting walkthrough: COMPLETE
+medium controlled baseline plan: BLOCKED at Step 3 until larger-disk cluster rerun
 ```
 
 Small data prefix:
@@ -807,6 +807,520 @@ Rerun only medium Step 3 first because medium Steps 1 and 2 already completed on
 If a new cluster is deferred, keep the two failed medium attempts as the medium disk-pressure example.
 ```
 
+Current handoff checkpoint as of 2026-05-24:
+
+```text
+Primary objective:
+  Resume Step 12 at the MCBP medium Step 3 disk-pressure checkpoint.
+
+Verified locally:
+  BrbfJob.scala uses setDefaultSparkConf(...), so submit-time --conf values can override
+  the baseline AQE, skew handling, shuffle partition, and default parallelism settings.
+
+Still pending before rerun:
+  rebuild JAR
+  upload rebuilt JAR to S3
+  create or select a larger-disk replacement EMR cluster
+  rerun only medium Step 3
+
+Do not rerun:
+  medium raw data generation
+  medium Step 1 FeatureLogConverter
+  medium Step 2 EligibleUserDataLogConverter
+```
+
+Active replacement EMR cluster for environment prep:
+
+```text
+Cluster name: itv-github-dev-cluster
+Cluster ID: j-3O78ZN9EMO9W2
+Region: us-east-1
+EMR release: emr-7.13.0
+Spark version: 3.5.6
+Status when recorded: Waiting
+Capacity: 1 Primary, 4 Core, 0 Task
+Primary public DNS: ec2-100-55-172-52.compute-1.amazonaws.com
+Core instance type: r8g.xlarge
+Core purchasing: On-Demand
+Core EBS: 300 GiB, 1 volume per core node
+Managed scaling: enabled
+Minimum cluster size: 4 instances
+Maximum cluster size: 6 instances
+Maximum core nodes: 4 instances
+Maximum On-Demand instances: 6 instances
+S3 logs: s3://aws-logs-210570462212-us-east-1/elasticmapreduce/
+CloudWatch log group: /aws/emr/j-3O78ZN9EMO9W2
+Persistent UIs: Spark History Server, YARN Timeline Server, Tez UI
+Idle auto-termination: 12 hours
+```
+
+Environment prep scope approved:
+
+```text
+1. Update KT docs with the new cluster ID and configuration.
+2. Verify AWS credentials from the shell.
+3. Verify access to the new cluster with aws emr describe-cluster.
+4. Verify Maven on the primary node, install if needed.
+5. Rebuild the JAR from current source.
+6. Upload the rebuilt JAR to S3.
+
+Stop before rerunning medium Step 3.
+```
+
+Environment prep status as of 2026-05-24:
+
+```text
+Step 1 docs update: COMPLETE
+Step 2 AWS credentials check: COMPLETE
+  account: 210570462212
+  role: arn:aws:sts::210570462212:assumed-role/AmazonEMR-InstanceProfile-20260502T160809/i-05120b102340638e8
+Step 3 cluster describe: COMPLETE
+  cluster id: j-3O78ZN9EMO9W2
+  name: itv-github-dev-cluster
+  state: WAITING
+  release: emr-7.13.0
+  primary public DNS: ec2-100-55-172-52.compute-1.amazonaws.com
+Step 4 local Maven readiness: COMPLETE
+  Maven installed locally: Apache Maven 3.8.4
+Step 5 local JAR rebuild: COMPLETE
+  Build command:
+    cd spark
+    mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
+  Result: BUILD SUCCESS
+  JAR:
+    spark/target/emr-migration-demo-0.1.0.jar
+  Verified classes:
+    com.demo.emr.FeatureLogConverter
+    com.demo.emr.EligibleUserDataLogConverter
+    com.demo.emr.BrbfJob
+Step 6 S3 JAR upload: COMPLETE
+  uploaded:
+    s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar
+  S3 listing:
+    2026-05-24 19:00:43 53147 emr-migration-demo-0.1.0.jar
+
+Environment prep is complete.
+Stop before rerunning medium Step 3 unless explicitly approved.
+```
+
+Medium rerun submission on replacement cluster:
+
+```text
+Submitted on: 2026-05-24
+Cluster ID: j-3O78ZN9EMO9W2
+Submission shape: full medium 3-step sequence
+
+Note:
+  The prior controlled plan preferred rerunning only medium Step 3 because
+  medium Steps 1 and 2 had already completed on S3. For this rerun, all
+  three medium steps were submitted in order.
+
+Current step snapshot:
+  Step 1 FeatureLogConverter:
+    step id: s-068154131WPULWDW4XNP
+    application id: application_1779641349593_0001
+    state: COMPLETED
+    start time: 2026-05-24T19:02:43.480000+00:00
+    end time: 2026-05-24T19:03:31.597000+00:00
+    console time: May 24, 2026 at 15:02 to 15:02
+    runtime: 48 seconds
+  Step 2 EligibleUserDataLogConverter:
+    step id: s-00846262IMCXFAJXETUF
+    application id: application_1779641349593_0002
+    state: COMPLETED
+    start time: 2026-05-24T19:03:36.602000+00:00
+    end time: 2026-05-24T19:04:12.651000+00:00
+    console time: May 24, 2026 at 15:02 to 15:03
+    runtime: 36 seconds
+  Step 3 BrbfJob disk baseline:
+    step id: s-08787702FEIHIIC8N85H
+    application id: application_1779641349593_0003
+    state: RUNNING
+    start time: 2026-05-24T19:04:17.656000+00:00
+    Spark app start time: 2026-05-24T19:04:20.222GMT
+    Spark History Server app state when checked: running / completed=false
+
+Step 3 still uses the planned first-rerun overrides:
+  --conf spark.sql.shuffle.partitions=400
+  --conf spark.executor.cores=2
+  --conf spark.sql.adaptive.enabled=true
+  --conf spark.sql.adaptive.coalescePartitions.enabled=true
+  --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+  --conf spark.shuffle.compress=true
+  --conf spark.shuffle.spill.compress=true
+
+Live Spark UI checkpoint:
+  Spark History URL through tunnel:
+    http://localhost:18080/history/application_1779641349593_0003/jobs/
+  Active job:
+    Job 37
+    description: count at BrbfJob.scala:80
+    submitted: 2026-05-24T19:06:16.341GMT
+    duration when user copied UI: about 6.8 min
+    stages: 0/7 succeeded
+    tasks when user copied UI: 83/512, 13 running
+  API snapshot shortly after:
+    status: RUNNING
+    stage ids: 60, 56, 57, 61, 58, 55, 59
+    tasks: 96/512 completed, 13 active
+    failed tasks: 0
+    active stages: 1
+  Follow-up API snapshot:
+    tasks: 109/512 completed, 13 active
+    failed tasks: 0
+  Stage view checkpoint:
+    active stages: 1
+    pending stages: 6
+    completed stages: 37
+    skipped stages: 18
+    active stage: Stage 61
+    description: count at BrbfJob.scala:80
+    submitted: 2026-05-24 19:06:16
+    duration when copied: 8.3 min
+    tasks when copied: 109/196, 13 running
+    input shown in UI: 2010.9 MiB
+    shuffle write shown in UI: 117.2 GiB
+    pending stages for Job 37: 60, 59, 58, 57, 56, 55
+  Stage 61 API checkpoint:
+    status: ACTIVE
+    tasks: 128/196 complete, 13 active
+    failed tasks: 0
+    memory spill: 3,487,983,206,400 bytes, about 3.2 TiB
+    disk spill: 150,354,839,245 bytes, about 140 GiB
+    peak execution memory: 520,812,365,684 bytes, about 485 GiB aggregate
+    shuffle read: 2,487,355,609 bytes, about 2.3 GiB
+    shuffle read records: 8,435,363
+    shuffle write: 151,271,936,539 bytes, about 141 GiB
+    shuffle write records: 3,575,298,561
+    GC time: 54,951 ms
+    shuffle fetch wait: 11,013 ms
+
+Live Executors checkpoint:
+  summary:
+    active executors including driver: 7
+    dead executors: 0
+    storage memory: 0.0 B / 59.3 GiB
+    disk used: 0.0 B
+    total executor cores: 12
+    active tasks: 13
+    failed tasks: 0
+    complete tasks: 566
+    total tasks: 579
+    task time: 1.6 h
+    GC time: 55 s
+    input: 1.3 GiB
+    shuffle read: 8.3 GiB
+    shuffle write: 117.8 GiB
+  executor balance:
+    executor 1: 121 complete, 2 active, 0 failed, 22.6 GiB shuffle write
+    executor 2: 141 complete, 2 active, 0 failed, 21.3 GiB shuffle write
+    executor 3: 133 complete, 3 active, 0 failed, 20.5 GiB shuffle write
+    executor 4: 140 complete, 2 active, 0 failed, 20.3 GiB shuffle write
+    executor 5: 17 complete, 2 active, 0 failed, 16.7 GiB shuffle write
+    executor 6: 14 complete, 2 active, 0 failed, 16.5 GiB shuffle write
+  interpretation:
+    No dead executors and no failed tasks are visible in this snapshot.
+    The executor table's Disk Used column reflects storage/disk persistence, not
+    total task spill. Stage 61 task metrics show substantial memory and disk spill,
+    but the larger-disk replacement cluster is still progressing without executor loss.
+  Job 37 completion checkpoint:
+    completion time: 2026-05-24T19:21:48.775GMT
+    status: SUCCEEDED
+    completed tasks: 196
+    skipped tasks: 316
+    failed task attempts: 2
+    killed tasks: 0
+    completed stages: 1
+    skipped stages: 6
+    failed stages: 0
+    interpretation: the spill-heavy joined.count() path recovered from 2 failed
+      task attempts and completed without failed stages. Step 3 continued running
+      after Job 37, so the pipeline moved past the previous failure checkpoint.
+  Job 38 runtime estimate checkpoint:
+    checked at: 2026-05-24T19:42:55Z
+    status: RUNNING
+    active stage: Stage 70
+    active stage tasks: 115/400 complete, 9 active
+    job tasks: 115/921 complete
+    failed task attempts: 2
+    killed tasks: 0
+    failed stages: 0
+    active stage elapsed: about 21 minutes
+    rough estimate at current stage rate: Stage 70 alone may need about 50 more minutes,
+      plus later pending stages and remaining Step 3 actions. This is slow but still
+      progressing; the main warning signs remain failed stages, executor loss, or
+      rapidly increasing failed task attempts.
+  Job 38 risk checkpoint:
+    status: RUNNING
+    job tasks: 402/921 task attempts complete
+    completed task indices: 273
+    failed task attempts: 19
+    active tasks: 11
+    completed stages: 1
+    failed stage attempts: 2
+    killed tasks: 0
+    active stage: Stage 70 attempt 2
+    active stage attempt progress: 64/120 complete, 11 active
+    failure seen in prior Stage 70 attempt:
+      FetchFailedException
+      No route to host: ip-172-31-82-135.ec2.internal:7337
+    interpretation:
+      Full medium is no longer just slow; it is showing shuffle fetch instability.
+      It remains alive, but risk is elevated and this scale is too heavy for the
+      planned 20-minute demo target.
+  Cancel attempt:
+    command attempted:
+      aws emr cancel-steps --region us-east-1 --cluster-id j-3O78ZN9EMO9W2 --step-ids s-08787702FEIHIIC8N85H
+    result:
+      AccessDeniedException
+    reason:
+      AmazonEMR-InstanceProfile-20260502T160809 does not have elasticmapreduce:CancelSteps
+    current state after failed cancel:
+      EMR step still RUNNING
+      Spark Job 38 still RUNNING
+    safe next options:
+      cancel from AWS console or an IAM principal with elasticmapreduce:CancelSteps
+      or explicitly approve a YARN application kill from the cluster if console cancel is not available
+  Console cancel result:
+    state: CANCELLED
+    state change reason: Cancelled by user
+    end time: 2026-05-24T20:46:26.039000+00:00
+    final Step 3 outcome:
+      intentionally cancelled after collecting enough evidence that full medium
+      is too slow/unstable for the 20-minute demo target
+    final Spark evidence before cancel:
+      Job 37 succeeded and proved the larger-disk cluster got past the first
+      old no-space failure checkpoint.
+      Job 38 was still running with 19 failed task attempts, 2 failed stage
+      attempts, and FetchFailedException / No route to host evidence.
+    next planned action:
+      create smalllevel2 scale, likely 1.5x small, under
+      s3://aigithub-emr-2026/emr-migration-demo-smalllevel2/
+      The immediate target is about 10 minutes, not the earlier 20-minute
+      light-medium target.
+```
+
+Future smalllevel2 demo-scale plan:
+
+```text
+Why:
+  The full medium run is useful as a stress/evidence run, but it is too heavy
+  for an interactive client demo target. The next practical demo scale should
+  preserve the same BRBF workload shape while targeting about 10 minutes
+  end-to-end on the replacement cluster/config.
+
+When:
+  Do this after the medium Step 3 cancellation and evidence are documented.
+
+Target:
+  smalllevel2 runtime goal: about 10 minutes end-to-end
+  cluster/config: keep the same replacement-cluster shape and Step 3 runtime overrides
+
+Known scale anchors:
+  small = 1x
+    bids: 1,000,000
+    impressions_feedback: 700,000
+    contextual: 200,000
+    matched_user_data: 200,000
+    advertiser: 10,000
+    koa_settings: 10,000
+    feature_log: 500,000
+    sib: 100,000
+  medium = 10x bids and much heavier joined/shuffle behavior
+    bids: 10,000,000
+    impressions_feedback: 7,000,000
+    contextual: 1,000,000
+    matched_user_data: 1,000,000
+    advertiser: 25,000
+    koa_settings: 25,000
+    feature_log: 3,000,000
+    sib: 500,000
+
+Observed medium evidence:
+  Step 3 on the larger-disk replacement cluster was intentionally cancelled
+  after about 102 minutes. Job 37 completed and proved the disk fix got past
+  the old no-space checkpoint. Job 38 was still running and showed elevated
+  risk: failed task attempts, failed stage attempts, and shuffle fetch
+  instability.
+
+Initial scale hypothesis:
+  Because medium did not complete and showed non-linear shuffle/spill behavior,
+  start at about 1.5x small before jumping higher.
+
+Recommended smalllevel2 row counts:
+  bids: 1,500,000
+  impressions_feedback: 1,050,000
+  contextual: 300,000
+  matched_user_data: 300,000
+  advertiser: 12,000
+  koa_settings: 12,000
+  feature_log: 750,000
+  sib: 150,000
+
+Implementation note:
+  scripts/generate_mock_data.py now includes the smalllevel2 preset.
+  KT/12_scale_data_and_tune_runtime.md includes copy/paste commands for
+  creating the S3 layout, generating raw data, validating raw data, and
+  submitting the three EMR steps on cluster j-3O78ZN9EMO9W2.
+
+Observed smalllevel2 result:
+  BRBF Step 3 completed in about 4 minutes on the replacement cluster.
+  Interpretation: 1.5x small is stable and useful as a safe demo baseline, but
+  it undershoots the desired 10-minute BRBF troubleshooting target.
+
+Next sizing recommendation:
+  Skip the 2x rung unless a very cautious intermediate test is needed.
+  Use the 3x light-medium candidate next for a better 10-minute calibration.
+  This became the selected next run for the replacement cluster.
+
+Candidate 3x light-medium row counts:
+  bids: 3,000,000
+  impressions_feedback: 2,100,000
+  contextual: 500,000
+  matched_user_data: 500,000
+  advertiser: 15,000
+  koa_settings: 15,000
+  feature_log: 1,000,000
+  sib: 250,000
+
+Implementation note:
+  scripts/generate_mock_data.py now includes the lightmedium preset.
+  Use --scale lightmedium with base prefix:
+    s3://aigithub-emr-2026/emr-migration-demo-light-medium/
+  KT/12_scale_data_and_tune_runtime.md includes copy/paste commands for
+  creating, generating, validating, and submitting the light-medium run.
+
+Observed light-medium result:
+  BRBF Step 3 completed in about 12 minutes on the replacement cluster.
+  Interpretation: 3x light-medium is the preferred demo load for this cluster.
+  It is long enough to show useful Spark UI behavior and short enough for a
+  client walkthrough.
+
+Light-medium Spark UI analysis result:
+  app id: application_1779641349593_0009
+  app name: emr-migration-brbf-before-dag
+  EMR step id: s-06984631PV9G98A51OTN
+  dominant query: Query 8 / count at BrbfJob.scala:80
+  query duration: 7.5 minutes
+  dominant stage: Stage 63 / Job 38
+  stage duration: 7.1 minutes
+  stage metrics:
+    400 tasks
+    shuffle read: 1101.9 MiB / 4,000,000 records
+    median task duration: 95 ms
+    p75 task duration: 21 s
+    max task duration: 1.5 min
+    failed tasks: 0
+  physical-plan finding:
+    feature-log ShuffledHashJoin expands the joined path from about
+    3,000,000 rows to 602,400,000 rows
+  code mapping:
+    BrbfJob.scala:80 triggers joined.count()
+    BrbfJob.scala:51-78 builds and persists joined
+    BrbfJob.scala:57-62 is the featureLog join on user_id_hash/contextual_id
+    FeatureLogConverter.scala:38 deduplicates by feature_event_id, not by
+    user_id_hash/contextual_id
+  classification:
+    feature-log join cardinality/fanout with Stage 63 task-duration stragglers
+    not primarily source scan size
+    not proven memory pressure or spill from the pasted evidence
+  Databricks recommendation:
+    first validate whether feature-log fanout is business-expected
+    if accidental, fix join grain / pre-aggregate / deduplicate / add time window
+    if intentional, keep fanout but use Delta layout, AQE/skew handling, Photon,
+    and reduce repeated actions over the expanded joined DataFrame
+  Photon expectation if code is kept as-is:
+    planning estimate: about 1.2x-2x end-to-end improvement
+    possible upside: 2x-3x if native joins/aggregates/writes dominate
+    do not promise 5x because Photon does not remove 602.4M-row fanout
+  UDF rewrite note:
+    sha256String can likely become native sha2(...)
+    roundTimestampToMinutes can likely become native timestamp math
+    stableUuidFromString needs correctness testing before rewrite
+    UDF rewrite alone is secondary to fanout and likely modest compared with
+    cardinality/layout changes
+  worked examples updated:
+    KT/spark_troubleshooting/client_spark_ui_troubleshooting_prompt_examples.md
+    now includes light-medium examples for Airflow entry point, runtime config,
+    physical plan bottleneck, Spark stage size, bottleneck stage metrics,
+    stage/operator/code mapping, and feature-log cardinality follow-up.
+
+Scale-selection rule:
+  If a completed run exists, estimate:
+    estimated_target_scale = completed_scale * (10 minutes / observed_runtime_minutes)
+  If only the cancelled medium run is available, treat medium as an upper
+  bound, not a linear sizing datapoint. The cancelled 10x run exceeded 100
+  minutes and was unstable, so the next practical demo scale should stay close
+  to small.
+
+Caution:
+  Do not rely only on linear scaling. The BRBF joined/shuffle path expands
+  nonlinearly because of joins, high-frequency rows, aggregation, spill, and
+  sort/write behavior. The 1.5x run completed safely in about 4 minutes, and
+  the 3x run completed in about 12 minutes. Keep full medium as the upper-risk
+  guardrail.
+
+Proposed future prefix:
+  s3://aigithub-emr-2026/emr-migration-demo-smalllevel2/
+
+Next proposed prefix:
+  s3://aigithub-emr-2026/emr-migration-demo-light-medium/
+```
+
+Current resume checkpoint:
+
+```text
+The EMR-side light-medium analysis loop is complete.
+
+Do not submit another EMR tuning run before syncing the repo unless there is a
+new explicit experiment.
+
+Next planned action:
+  sync the updated code and KT docs to the Git repository.
+
+After git sync, optional next work:
+  run the feature-log key-cardinality checks from the prompt examples
+  or begin the Databricks baseline/explain-plan path.
+```
+
+Resume environment prep after AWS credentials are available:
+
+```bash
+aws sts get-caller-identity --region us-east-1
+
+aws emr describe-cluster \
+  --region us-east-1 \
+  --cluster-id j-3O78ZN9EMO9W2 \
+  --query 'Cluster.[Id,Name,Status.State,ReleaseLabel,MasterPublicDnsName]' \
+  --output table
+
+aws s3 cp \
+  spark/target/emr-migration-demo-0.1.0.jar \
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar \
+  --region us-east-1
+```
+
+Preflight checks for the next shell:
+
+```bash
+aws sts get-caller-identity --region us-east-1
+mvn -version
+```
+
+If Maven is missing on the active machine or new EMR primary:
+
+```bash
+sudo dnf install -y maven
+```
+
+Then rebuild and upload from the repo root:
+
+```bash
+cd spark
+mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
+aws s3 cp target/*.jar s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/ --region us-east-1
+```
+
 Resume action as of 5:00 P.M. EST on 2026-05-23:
 
 ```text
@@ -886,7 +1400,7 @@ Use this prompt in a future Codex session:
 ```text
 Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md, KT/spark_troubleshooting/client_spark_ui_troubleshooting_plan.md, KT/spark_troubleshooting/client_spark_ui_troubleshooting_prompt_examples.md, and KT/spark_troubleshooting/spark_troubleshooting_cheat_sheet.md.
 
-Resume Step 12 from the MCBP medium controlled baseline checkpoint.
+Resume Step 12 after the completed light-medium Spark UI analysis checkpoint.
 
 Small-load source troubleshooting is complete:
 - small BRBF app: application_1779541486316_0003
@@ -894,46 +1408,45 @@ Small-load source troubleshooting is complete:
 - conclusion: too many small shuffle partitions/task waves, not primary skew or memory pressure
 - Stage Operator And Code Mapping Prompt now includes the completion-gate conclusion
 
-Medium data and converted inputs are already prepared:
+Medium stress evidence is complete enough for now:
 - medium prefix: s3://aigithub-emr-2026/emr-migration-demo-medium/
-- MCBP #1-#4 complete: scale confirmed, S3 layout created, data generated, raw data validated
-- MCBP #5 complete: FeatureLogConverter, step s-05377242F3A87LPS5JUZ
-- MCBP #6 complete: EligibleUserDataLogConverter, step s-04508423OSLJSZBQW90K
+- old cluster j-3S62AU5IR98MM failed medium Step 3 twice with disk/shuffle pressure
+- replacement cluster j-3O78ZN9EMO9W2 got past the old no-space checkpoint but full medium was intentionally cancelled after about 102 minutes
+- conclusion: full medium is useful stress evidence, but too heavy/unstable for the client walkthrough target
 
-Medium Step 3 has failed twice on cluster j-3S62AU5IR98MM:
-- attempt 1: step s-0661117QH89RUU39ZQ1, app application_1779541486316_0010, Job 20 / Stage 37.0, root cause java.io.IOException: No space left on device
-- attempt 2: step s-09085642ZQTGXNML2TKJ, app application_1779541486316_0011, controlled change was EMR scale-out plus --executor-cores 2; live UI reached Job 20 / Stage 38 with about 11.8 GiB input over 200 tasks before failing
+Calibrated demo load is complete:
+- smalllevel2 / 1.5x completed BRBF Step 3 in about 4 minutes
+- lightmedium / 3x completed BRBF Step 3 in about 12 minutes
+- preferred demo prefix: s3://aigithub-emr-2026/emr-migration-demo-light-medium/
+- preferred demo app: application_1779641349593_0009
+- preferred demo step: s-06984631PV9G98A51OTN
+- cluster: j-3O78ZN9EMO9W2
 
-Current decision:
-- stop tuning blindly on the current cluster
-- create a restore checkpoint before infrastructure changes
-- create a new EMR cluster with larger worker local/EBS disk from the start
-- rerun only medium Step 3 first, because medium Steps 1 and 2 already wrote converted data to S3
+Light-medium Spark UI analysis is complete:
+- dominant query: Query 8 / count at BrbfJob.scala:80, duration 7.5 minutes
+- dominant stage: Stage 63 / Job 38, duration 7.1 minutes
+- Stage 63: 400 tasks, 1101.9 MiB / 4,000,000 shuffle records, median task 95 ms, p75 21 s, max 1.5 min
+- physical-plan finding: feature-log ShuffledHashJoin expands about 3M rows to 602.4M rows
+- code mapping: BrbfJob.scala:80 -> joined.count(); BrbfJob.scala:57-62 -> featureLog join on user_id_hash/contextual_id
+- feature-log converter note: FeatureLogConverter.scala:38 deduplicates by feature_event_id, not by user_id_hash/contextual_id
+- classification: feature-log join cardinality/fanout with Stage 63 task-duration stragglers
+- not primary source scan size; not proven memory pressure/spill from pasted metrics
 
-New-cluster target:
-- same EMR release if possible: EMR 7.13.0 / Spark 3.5.6-amzn-2
-- 1 primary node
-- core instance type: r8g.xlarge
-- 4 core nodes
-- 0 task nodes for first rerun
-- Spot disabled; use On-Demand for the first baseline rerun
-- core worker EBS: gp3, 300 GiB, 3000 IOPS, 125 MiB/s throughput, 1 volume per instance
-- managed scaling enabled with max cluster size 6, max core nodes 4, max On-Demand 6
-- Spark event log enabled
+Databricks recommendation:
+- validate whether feature-log fanout is business-expected
+- if accidental: fix join grain, pre-aggregate, deduplicate, filter, or add a time/window predicate
+- if intentional: optimize Delta layout/statistics, AQE/skew handling, Photon, and repeated actions over the expanded DataFrame
+- Photon with code unchanged: plan for about 1.2x-2x end-to-end; treat 2x-3x as upside; do not promise 5x because Photon cannot remove 602.4M-row fanout
+- native expression follow-up: sha256String -> sha2(...), roundTimestampToMinutes -> native timestamp math, stableUuidFromString needs correctness tests
 
-Before rerunning Step 3:
-- rebuild and upload the JAR because BrbfJob now allows submit-time --conf overrides by setting its baseline values only as defaults
-- do not rerun medium Steps 1 or 2 first
-- keep the live Spark UI tunnel ready for Job 20 / Stage 37 or 38
+Docs updated:
+- KT/12_scale_data_and_tune_runtime.md
+- KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md
+- KT/spark_troubleshooting/client_spark_ui_troubleshooting_plan.md
+- KT/spark_troubleshooting/client_spark_ui_troubleshooting_prompt_examples.md
+- KT/spark_troubleshooting/spark_troubleshooting_cheat_sheet.md
 
-Medium Step 3 first-rerun submit overrides:
-- --conf spark.sql.shuffle.partitions=400
-- --conf spark.executor.cores=2
-- --conf spark.sql.adaptive.enabled=true
-- --conf spark.sql.adaptive.coalescePartitions.enabled=true
-- --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
-- --conf spark.shuffle.compress=true
-- --conf spark.shuffle.spill.compress=true
-
-Keep updating the resume plan, EMR troubleshooting guide, client Spark UI plan, prompt examples, and cheat sheet so the workflow remains copy/paste friendly for client Spark UI investigations.
+Next planned action:
+- sync the updated code and KT docs to the Git repository
+- do not run more EMR tuning before git sync unless a new explicit experiment is requested
 ```

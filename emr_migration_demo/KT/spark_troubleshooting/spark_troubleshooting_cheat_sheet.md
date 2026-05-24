@@ -25,6 +25,7 @@ Prompt Outcome Examples: client_spark_ui_troubleshooting_prompt_examples.md
 | [Quick Prompt Order](#quick-prompt-order) | Choosing which client troubleshooting prompt to run next. |
 | [Current Demo Checkpoint](#current-demo-checkpoint) | Recalling the current small-run Stage 38 conclusion. |
 | [Current Medium Checkpoint](#current-medium-checkpoint) | Recalling the MCBP medium disk-pressure state. |
+| [Current Light-Medium Checkpoint](#current-light-medium-checkpoint) | Recalling the preferred 3x demo-load conclusion. |
 
 ## The Core Loop
 
@@ -45,6 +46,9 @@ Start from Airflow or the scheduler:
 ```text
 Airflow DAG/task
 -> EMR step or Spark submit
+-> command-runner.jar / spark-submit args
+-> application JAR or Python file
+-> --class / main class / entry point
 -> YARN application id
 -> Spark History application
 ```
@@ -385,6 +389,7 @@ Use prompts from `client_spark_ui_troubleshooting_plan.md` in this order:
      Skew Follow-Up Prompt
      Memory Pressure Follow-Up Prompt
      Small Shuffle Partitions Follow-Up Prompt
+     Feature-Log Join Cardinality Follow-Up Prompt, when a join fanout or grain issue is the best current classification
 9. Use the matching Databricks-side prompt when moving from source findings to Databricks validation:
      Explain Insertion Prompt, to place explain in code or notebook
      Databricks Explain Plan Interpretation Prompt, after adding explain to the baseline
@@ -461,6 +466,67 @@ Medium Step 3 first-rerun submit overrides:
   --conf spark.shuffle.spill.compress=true
 
 Important:
+  verify AWS credentials and Maven availability before rerun work
   rebuild and upload the JAR first
   BrbfJob submit-time --conf overrides now work because in-code settings are defaults only
+```
+
+## Current Light-Medium Checkpoint
+
+As of the completed light-medium run on cluster `j-3O78ZN9EMO9W2`:
+
+```text
+dataset prefix:
+  s3://aigithub-emr-2026/emr-migration-demo-light-medium/
+
+scale:
+  3x small / lightmedium
+
+BRBF Step 3:
+  app id: application_1779641349593_0009
+  step id: s-06984631PV9G98A51OTN
+  runtime: about 12 minutes
+
+dominant query:
+  Query 8 / count at BrbfJob.scala:80
+  duration: 7.5 minutes
+
+dominant stage:
+  Stage 63 / Job 38
+  duration: 7.1 minutes
+  tasks: 400
+  shuffle read: 1101.9 MiB / 4,000,000 records
+  median task duration: 95 ms
+  p75 task duration: 21 s
+  max task duration: 1.5 min
+
+main finding:
+  feature-log ShuffledHashJoin expands the joined path from about 3M rows to
+  602.4M rows.
+
+classification:
+  feature-log join cardinality/fanout with Stage 63 task-duration stragglers
+  not primarily source scan size
+  not proven memory pressure or spill from the pasted metrics
+
+code mapping:
+  BrbfJob.scala:80 -> joined.count()
+  BrbfJob.scala:51-78 -> joined DataFrame construction and persist
+  BrbfJob.scala:57-62 -> featureLog join on user_id_hash/contextual_id
+  FeatureLogConverter.scala:38 -> deduplicates by feature_event_id only
+
+Databricks recommendation:
+  if fanout is accidental, fix join grain / pre-aggregate / deduplicate / add a time window
+  if fanout is intentional, optimize Delta layout/statistics, AQE/skew handling,
+  Photon execution, and repeated actions over the expanded joined shape
+
+Photon estimate with code unchanged:
+  plan for about 1.2x-2x end-to-end
+  treat 2x-3x as upside
+  do not promise 5x because Photon cannot remove the 602.4M-row fanout
+
+native expression follow-up:
+  sha256String -> likely native sha2(...)
+  roundTimestampToMinutes -> likely native timestamp math
+  stableUuidFromString -> test carefully before rewriting
 ```

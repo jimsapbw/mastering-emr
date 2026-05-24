@@ -289,6 +289,338 @@ finalBrbfSmall.groupBy("branch", "salt").count().orderBy("branch", "salt").show(
 
 For each of the three EMR steps:
 
+## Create Smalllevel2 10-Minute Calibration Load
+
+Use this after the full medium Step 3 cancellation. The goal is a practical
+client-demo load that is larger than `small`, but stays close enough to the
+known-good scale to target about 10 minutes on the larger replacement cluster.
+
+Smalllevel2 scale:
+
+```text
+bids: 1,500,000
+impressions_feedback: 1,050,000
+contextual: 300,000
+matched_user_data: 300,000
+advertiser: 12,000
+koa_settings: 12,000
+feature_log: 750,000
+sib: 150,000
+```
+
+Create the S3 layout:
+
+```bash
+BASE_PREFIX=emr-migration-demo-smalllevel2 \
+bash scripts/create_s3_prefixes.sh aigithub-emr-2026
+```
+
+Generate raw data:
+
+```bash
+spark-submit \
+  --master local[*] \
+  scripts/generate_mock_data.py \
+  --bucket aigithub-emr-2026 \
+  --base-prefix emr-migration-demo-smalllevel2 \
+  --run-date 2026-05-21 \
+  --hour 10 \
+  --late-hour 11 \
+  --scale smalllevel2 \
+  --partitions 96 \
+  --mode overwrite
+```
+
+Validate raw data:
+
+```bash
+spark-submit \
+  --master local[*] \
+  scripts/validate_mock_data.py \
+  --bucket aigithub-emr-2026 \
+  --base-prefix emr-migration-demo-smalllevel2 \
+  --run-date 2026-05-21 \
+  --hour 10 \
+  --late-hour 11
+```
+
+Submit all three smalllevel2 EMR steps on the replacement cluster:
+
+```bash
+aws emr add-steps \
+  --region us-east-1 \
+  --cluster-id j-3O78ZN9EMO9W2 \
+  --steps '[
+    {
+      "Name": "emr-migration-demo-smalllevel2-step-1-feature-log-converter",
+      "ActionOnFailure": "CONTINUE",
+      "Type": "CUSTOM_JAR",
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode", "client",
+        "--class", "com.demo.emr.FeatureLogConverter",
+        "s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar",
+        "--bucket", "aigithub-emr-2026",
+        "--base-prefix", "emr-migration-demo-smalllevel2",
+        "--run-date", "2026-05-21",
+        "--hour", "10",
+        "--late-hour", "11",
+        "--output-mode", "overwrite"
+      ]
+    },
+    {
+      "Name": "emr-migration-demo-smalllevel2-step-2-eligible-user-data-converter",
+      "ActionOnFailure": "CONTINUE",
+      "Type": "CUSTOM_JAR",
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode", "client",
+        "--class", "com.demo.emr.EligibleUserDataLogConverter",
+        "s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar",
+        "--bucket", "aigithub-emr-2026",
+        "--base-prefix", "emr-migration-demo-smalllevel2",
+        "--run-date", "2026-05-21",
+        "--hour", "10",
+        "--late-hour", "11",
+        "--output-mode", "overwrite"
+      ]
+    },
+    {
+      "Name": "emr-migration-demo-smalllevel2-step-3-brbf-job-10min-calibration",
+      "ActionOnFailure": "CONTINUE",
+      "Type": "CUSTOM_JAR",
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode", "client",
+        "--conf", "spark.sql.shuffle.partitions=400",
+        "--conf", "spark.executor.cores=2",
+        "--conf", "spark.sql.adaptive.enabled=true",
+        "--conf", "spark.sql.adaptive.coalescePartitions.enabled=true",
+        "--conf", "spark.serializer=org.apache.spark.serializer.KryoSerializer",
+        "--conf", "spark.shuffle.compress=true",
+        "--conf", "spark.shuffle.spill.compress=true",
+        "--class", "com.demo.emr.BrbfJob",
+        "s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar",
+        "--bucket", "aigithub-emr-2026",
+        "--base-prefix", "emr-migration-demo-smalllevel2",
+        "--run-date", "2026-05-21",
+        "--hour", "10",
+        "--late-hour", "11",
+        "--output-mode", "overwrite"
+      ]
+    }
+  ]'
+```
+
+Monitor:
+
+```bash
+aws emr list-steps \
+  --region us-east-1 \
+  --cluster-id j-3O78ZN9EMO9W2 \
+  --query 'Steps[*].[Id,Name,Status.State,Status.Timeline.StartDateTime,Status.Timeline.EndDateTime]' \
+  --output table
+```
+
+Observed smalllevel2 result:
+
+```text
+BRBF Step 3 completed in about 4 minutes on the replacement cluster.
+Interpretation: smalllevel2 is stable and useful as a safe baseline, but it is
+below the desired 10-minute BRBF troubleshooting target.
+Next recommended calibration load: 3x light-medium.
+```
+
+3x light-medium target row counts:
+
+```text
+bids: 3,000,000
+impressions_feedback: 2,100,000
+contextual: 500,000
+matched_user_data: 500,000
+advertiser: 15,000
+koa_settings: 15,000
+feature_log: 1,000,000
+sib: 250,000
+```
+
+## Create Light-Medium 3x Demo Load
+
+Use this after smalllevel2 finishes too quickly for the desired demo window.
+This is the preferred dataset for the current replacement cluster because
+smalllevel2 completed BRBF Step 3 in about 4 minutes and light-medium completed
+BRBF Step 3 in about 12 minutes.
+
+Create the S3 layout:
+
+```bash
+BASE_PREFIX=emr-migration-demo-light-medium \
+bash scripts/create_s3_prefixes.sh aigithub-emr-2026
+```
+
+Generate raw data:
+
+```bash
+spark-submit \
+  --master local[*] \
+  scripts/generate_mock_data.py \
+  --bucket aigithub-emr-2026 \
+  --base-prefix emr-migration-demo-light-medium \
+  --run-date 2026-05-21 \
+  --hour 10 \
+  --late-hour 11 \
+  --scale lightmedium \
+  --partitions 128 \
+  --mode overwrite
+```
+
+Validate raw data:
+
+```bash
+spark-submit \
+  --master local[*] \
+  scripts/validate_mock_data.py \
+  --bucket aigithub-emr-2026 \
+  --base-prefix emr-migration-demo-light-medium \
+  --run-date 2026-05-21 \
+  --hour 10 \
+  --late-hour 11
+```
+
+Submit all three light-medium EMR steps:
+
+```bash
+aws emr add-steps \
+  --region us-east-1 \
+  --cluster-id j-3O78ZN9EMO9W2 \
+  --steps '[
+    {
+      "Name": "emr-migration-demo-light-medium-step-1-feature-log-converter",
+      "ActionOnFailure": "CONTINUE",
+      "Type": "CUSTOM_JAR",
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode", "client",
+        "--class", "com.demo.emr.FeatureLogConverter",
+        "s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar",
+        "--bucket", "aigithub-emr-2026",
+        "--base-prefix", "emr-migration-demo-light-medium",
+        "--run-date", "2026-05-21",
+        "--hour", "10",
+        "--late-hour", "11",
+        "--output-mode", "overwrite"
+      ]
+    },
+    {
+      "Name": "emr-migration-demo-light-medium-step-2-eligible-user-data-converter",
+      "ActionOnFailure": "CONTINUE",
+      "Type": "CUSTOM_JAR",
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode", "client",
+        "--class", "com.demo.emr.EligibleUserDataLogConverter",
+        "s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar",
+        "--bucket", "aigithub-emr-2026",
+        "--base-prefix", "emr-migration-demo-light-medium",
+        "--run-date", "2026-05-21",
+        "--hour", "10",
+        "--late-hour", "11",
+        "--output-mode", "overwrite"
+      ]
+    },
+    {
+      "Name": "emr-migration-demo-light-medium-step-3-brbf-job-demo-calibration",
+      "ActionOnFailure": "CONTINUE",
+      "Type": "CUSTOM_JAR",
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode", "client",
+        "--conf", "spark.sql.shuffle.partitions=400",
+        "--conf", "spark.executor.cores=2",
+        "--conf", "spark.sql.adaptive.enabled=true",
+        "--conf", "spark.sql.adaptive.coalescePartitions.enabled=true",
+        "--conf", "spark.serializer=org.apache.spark.serializer.KryoSerializer",
+        "--conf", "spark.shuffle.compress=true",
+        "--conf", "spark.shuffle.spill.compress=true",
+        "--class", "com.demo.emr.BrbfJob",
+        "s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar",
+        "--bucket", "aigithub-emr-2026",
+        "--base-prefix", "emr-migration-demo-light-medium",
+        "--run-date", "2026-05-21",
+        "--hour", "10",
+        "--late-hour", "11",
+        "--output-mode", "overwrite"
+      ]
+    }
+  ]'
+```
+
+Monitor:
+
+```bash
+aws emr list-steps \
+  --region us-east-1 \
+  --cluster-id j-3O78ZN9EMO9W2 \
+  --query 'Steps[*].[Id,Name,Status.State,Status.Timeline.StartDateTime,Status.Timeline.EndDateTime]' \
+  --output table
+```
+
+Observed light-medium result:
+
+```text
+BRBF Step 3 completed in about 12 minutes on the replacement cluster.
+Interpretation: this is the preferred demo load for cluster j-3O78ZN9EMO9W2.
+It is long enough to show useful Spark UI behavior and short enough for a
+client walkthrough.
+```
+
+Completed light-medium Spark UI analysis:
+
+```text
+app id: application_1779641349593_0009
+EMR step id: s-06984631PV9G98A51OTN
+dominant query: Query 8 / count at BrbfJob.scala:80
+query duration: 7.5 minutes
+dominant stage: Stage 63 / Job 38
+stage duration: 7.1 minutes
+
+primary finding:
+  feature-log ShuffledHashJoin expands about 3,000,000 joined rows to
+  602,400,000 rows.
+
+stage classification:
+  Stage 63 has task-duration stragglers:
+    median task duration: 95 ms
+    p75 task duration: 21 s
+    max task duration: 1.5 min
+  Shuffle byte skew is only mild to moderate from the pasted metrics.
+  Memory pressure and spill are not proven as primary from the pasted metrics.
+
+code mapping:
+  BrbfJob.scala:80 -> joined.count()
+  BrbfJob.scala:51-78 -> joined DataFrame construction and persist
+  BrbfJob.scala:57-62 -> featureLog join on user_id_hash/contextual_id
+  FeatureLogConverter.scala:38 -> deduplicates by feature_event_id only
+
+Databricks migration recommendation:
+  validate whether the feature-log many-to-many fanout is expected.
+  If accidental, correct the join grain or pre-aggregate/deduplicate/window
+  feature_log before the BRBF join.
+  If intentional, use Delta layout/statistics, AQE/skew handling, Photon, and
+  reduce repeated actions over the expanded joined DataFrame.
+
+Photon expectation with code unchanged:
+  plan for about 1.2x-2x end-to-end improvement;
+  treat 2x-3x as upside, not a commitment;
+  do not promise 5x because Photon cannot remove the 602.4M-row fanout.
+```
+
 ```text
 step id
 status
@@ -398,10 +730,33 @@ aws s3 cp \
 
 Because `BrbfJob.scala` now lets `spark-submit --conf` override its baseline Spark defaults, rebuild and upload the JAR before the new-cluster rerun:
 
+Preflight:
+
+```bash
+aws sts get-caller-identity --region us-east-1
+mvn -version
+```
+
+If Maven is not installed on the active machine or EMR primary:
+
+```bash
+sudo dnf install -y maven
+```
+
+Build and upload:
+
 ```bash
 cd spark
 mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
 aws s3 cp target/*.jar s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/ --region us-east-1
+```
+
+Implementation guardrail:
+
+```text
+Do not skip the rebuild/upload step.
+The source now uses setDefaultSparkConf(...), but the S3 JAR must contain that change before
+the medium Step 3 submit-time overrides will take effect.
 ```
 
 Recommended new cluster shape:
@@ -450,6 +805,138 @@ Spark event log:
 Spark history dir:
   hdfs:///var/log/spark/apps
   or S3 if history must survive cluster termination
+```
+
+Active replacement cluster selected:
+
+```text
+Cluster name: itv-github-dev-cluster
+Cluster ID: j-3O78ZN9EMO9W2
+Region: us-east-1
+EMR release: emr-7.13.0
+Spark version: 3.5.6
+Status when recorded: Waiting
+Capacity: 1 Primary, 4 Core, 0 Task
+Primary public DNS: ec2-100-55-172-52.compute-1.amazonaws.com
+Core instance type: r8g.xlarge
+Core EBS: 300 GiB, 1 volume per core node
+Purchasing: On-Demand
+Managed scaling: enabled, 4-6 instances, max 4 core nodes
+CloudWatch log group: /aws/emr/j-3O78ZN9EMO9W2
+```
+
+Environment-prep boundary:
+
+```text
+Prepare credentials, Maven, rebuilt JAR, and S3 upload first.
+Do not submit medium Step 3 until environment prep is complete.
+```
+
+Current environment-prep status:
+
+```text
+Docs updated with active cluster: COMPLETE
+Local Maven installed: COMPLETE
+Local JAR rebuild: COMPLETE
+Local JAR path: spark/target/emr-migration-demo-0.1.0.jar
+JAR contents verified: BrbfJob, FeatureLogConverter, EligibleUserDataLogConverter present
+AWS credential check: COMPLETE, account 210570462212
+Cluster describe: COMPLETE, j-3O78ZN9EMO9W2 WAITING on emr-7.13.0
+S3 JAR upload: COMPLETE
+Uploaded JAR:
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar
+S3 listing:
+  2026-05-24 19:00:43 53147 emr-migration-demo-0.1.0.jar
+Medium rerun submit: STARTED as full 3-step sequence
+  Step 1 FeatureLogConverter:
+    step id: s-068154131WPULWDW4XNP
+    application id: application_1779641349593_0001
+    state: COMPLETED
+    start time: 2026-05-24T19:02:43.480000+00:00
+    end time: 2026-05-24T19:03:31.597000+00:00
+    runtime: 48 seconds
+  Step 2 EligibleUserDataLogConverter:
+    step id: s-00846262IMCXFAJXETUF
+    application id: application_1779641349593_0002
+    state: COMPLETED
+    start time: 2026-05-24T19:03:36.602000+00:00
+    end time: 2026-05-24T19:04:12.651000+00:00
+    runtime: 36 seconds
+  Step 3 BrbfJob disk baseline:
+    step id: s-08787702FEIHIIC8N85H
+    application id: application_1779641349593_0003
+    state: RUNNING
+    start time: 2026-05-24T19:04:17.656000+00:00
+    Spark app start time: 2026-05-24T19:04:20.222GMT
+    Spark History Server app state when checked: running / completed=false
+  Live Spark UI checkpoint:
+    active job: Job 37
+    description: count at BrbfJob.scala:80
+    submitted: 2026-05-24T19:06:16.341GMT
+    duration when user copied UI: about 6.8 min
+    stages: 0/7 succeeded
+    tasks when user copied UI: 83/512, 13 running
+    API snapshot shortly after: 96/512 completed, 13 active, 0 failed
+    stage ids: 60, 56, 57, 61, 58, 55, 59
+    follow-up API snapshot: 109/512 completed, 13 active, 0 failed
+  Stage view checkpoint:
+    active stage: Stage 61
+    description: count at BrbfJob.scala:80
+    duration when copied: 8.3 min
+    tasks when copied: 109/196, 13 running
+    input shown in UI: 2010.9 MiB
+    shuffle write shown in UI: 117.2 GiB
+    pending stages: 60, 59, 58, 57, 56, 55
+  Stage 61 API checkpoint:
+    status: ACTIVE
+    tasks: 128/196 complete, 13 active, 0 failed
+    memory spill: about 3.2 TiB
+    disk spill: about 140 GiB
+    peak execution memory: about 485 GiB aggregate
+    shuffle read: about 2.3 GiB / 8,435,363 records
+    shuffle write: about 141 GiB / 3,575,298,561 records
+    GC time: about 55 s
+    shuffle fetch wait: about 11 s
+  Live Executors checkpoint:
+    active executors including driver: 7
+    dead executors: 0
+    storage memory: 0.0 B / 59.3 GiB
+    disk used: 0.0 B
+    cores: 12
+    active tasks: 13
+    failed tasks: 0
+    complete tasks: 566
+    total tasks: 579
+    task time: 1.6 h
+    GC time: 55 s
+    input: 1.3 GiB
+    shuffle read: 8.3 GiB
+    shuffle write: 117.8 GiB
+    interpretation: heavy shuffle write and substantial task spill are visible,
+      but no failed tasks and no dead executors are visible in this snapshot
+  Job 37 completion checkpoint:
+    completion time: 2026-05-24T19:21:48.775GMT
+    status: SUCCEEDED
+    completed tasks: 196
+    skipped tasks: 316
+    failed task attempts: 2
+    killed tasks: 0
+    failed stages: 0
+    interpretation: the joined.count() path recovered from task retries and
+      completed; Step 3 continued into later work
+  Final Step 3 outcome:
+    state: CANCELLED
+    state change reason: Cancelled by user
+    end time: 2026-05-24T20:46:26.039000+00:00
+    reason: full medium was intentionally stopped after proving the larger-disk
+      cluster could pass the first old failure checkpoint, but Job 38 showed
+      elevated shuffle fetch instability and the run no longer matched the
+      20-minute demo target
+    final evidence before cancel:
+      Job 37 succeeded
+      Job 38 was running with 19 failed task attempts and 2 failed stage attempts
+      failure evidence included FetchFailedException / No route to host
+    next: create light-medium dataset and rerun with the same cluster/config
 ```
 
 Why this shape:
@@ -513,4 +1000,15 @@ Preserve the same analysis discipline on the new run:
 4. If Step 3 completes, validate final output and run the Spark UI prompt sequence.
 5. If Step 3 fails again, capture the first root-cause error before changing more settings.
 6. Keep the live Spark UI tunnel ready so Job 20 / Stage 37 or Stage 38 metrics can be captured during the run.
+```
+
+Do not change more than one major variable in the next rerun without recording the reason.
+The intended controlled change is:
+
+```text
+larger worker local/EBS disk from cluster creation
+same prepared medium data
+same converted Step 1 and Step 2 outputs
+Step 3 only
+submit-time runtime overrides listed above
 ```

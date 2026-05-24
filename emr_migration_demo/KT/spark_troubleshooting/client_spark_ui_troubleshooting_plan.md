@@ -24,6 +24,7 @@ KT/spark_troubleshooting/client_spark_ui_troubleshooting_prompt_examples.md
 | [Operator Evidence To Collect](#operator-evidence-to-collect) | Deciding which Spark operators and metrics to capture. |
 | [Photon Mapping](#photon-mapping) | Mapping physical operators to Photon-friendly and less friendly patterns. |
 | [Troubleshooting Checklist](#troubleshooting-checklist) | Running the end-to-end client Spark UI investigation flow. |
+| [Failed Source Rerun Prompt](#failed-source-rerun-prompt) | Classifying failed source runs before choosing another controlled action. |
 | [Airflow DAG Entry-Point Prompt](#airflow-dag-entry-point-prompt) | Prompting for Airflow-to-Spark trace and code entry point discovery. |
 | [Runtime Configuration Prompt](#runtime-configuration-prompt) | Prompting for Spark runtime setting capture. |
 | [Airflow Count Discovery Prompt](#airflow-count-discovery-prompt) | Prompting for counts and audit evidence from DAG/logs. |
@@ -457,6 +458,33 @@ Databricks target:
   Delta/Parquet scan -> native expressions -> AQE joins/skew handling -> Photon operators -> optimized write
 ```
 
+Current light-medium demo mapping:
+
+```text
+Preferred demo app:
+  application_1779641349593_0009
+
+Dominant source finding:
+  Query 8 / Stage 63 maps to BrbfJob.scala:80 and the featureLog join at
+  BrbfJob.scala:57-62.
+
+Main shape:
+  about 3M rows before feature_log
+  602.4M rows after feature_log
+
+Databricks recommendation:
+  Validate whether fanout is expected.
+  If accidental, correct the feature_log join grain before tuning.
+  If intentional, keep the fanout and optimize Delta layout/statistics,
+  AQE/skew handling, Photon execution, and repeated actions over the expanded
+  DataFrame.
+
+Photon expectation with code unchanged:
+  plan for about 1.2x-2x end-to-end;
+  treat 2x-3x as upside;
+  do not promise 5x because Photon does not remove join fanout.
+```
+
 ## Troubleshooting Checklist
 
 For each important application, collect:
@@ -508,6 +536,69 @@ Use careful language when comparing runtimes:
 
 ```text
 The first Databricks run is a migration baseline, not a final optimized target. Runtime differences may reflect cluster shape, Spark defaults, I/O behavior, and platform differences.
+```
+
+## Failed Source Rerun Prompt
+
+Use this prompt when a source-platform Spark run fails before a complete Spark History analysis is available.
+
+```text
+I am analyzing a failed source-platform Spark run for migration and performance assessment.
+
+Known context:
+- application id:
+- orchestration id / Airflow DAG task / EMR step id:
+- cluster id/name:
+- input scale and data prefix/table partition:
+- completed upstream steps:
+- failed Spark job/stage:
+- action line or SQL query, if known:
+- first root-cause error:
+- controlled change made before this attempt, if any:
+- live Spark UI observations before failure:
+
+Tasks:
+
+1. Classify the failure conservatively using only the provided evidence.
+2. Separate confirmed causes from possible but unproven causes:
+   - local disk / shuffle pressure
+   - memory pressure
+   - skew
+   - partition sizing
+   - executor loss / host issue
+   - code correctness
+3. Identify cascading symptoms that should not be treated as root cause.
+4. Decide whether the next action should be:
+   - preserve evidence only
+   - rerun the same step with one controlled config change
+   - rerun on a larger or differently provisioned cluster
+   - collect missing logs before rerunning
+5. List exactly what to capture on the next attempt:
+   - step id or run id
+   - application id
+   - runtime configuration
+   - failed stage and first root-cause error
+   - task median/max duration and shuffle read, if available
+   - memory spill, disk spill, GC, and executor loss evidence
+
+Return:
+
+Main finding:
+<one conservative sentence>
+
+Evidence:
+<short bullets grounded in the supplied ids, stages, and errors>
+
+Classification:
+confirmed:
+possible:
+not proven:
+cascading symptoms:
+
+Next controlled action:
+<one recommended action and why>
+
+Do not optimize broadly. Do not claim skew or memory pressure as primary unless the evidence supports it.
 ```
 
 ## Airflow DAG Entry-Point Prompt
@@ -597,6 +688,9 @@ Tasks:
    - JAR, wheel, Python file, or artifact path
    - deploy mode
    - Spark configs and packages
+   - for EMR steps using `command-runner.jar`, parse the step `Args` and extract:
+     `spark-submit`, `--class`, deploy mode, submit-time `--conf` values, and
+     the application JAR path that appears before the application arguments
    - input paths or table arguments
    - output paths or table arguments
    - run-date, partition, hour, or business-date arguments
