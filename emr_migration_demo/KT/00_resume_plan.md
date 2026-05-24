@@ -164,9 +164,12 @@ Branch: main
 Commit: a81e5c1 Add Spark troubleshooting cheat sheet and follow-up prompts
 ```
 
-Pending restore checkpoint after May 24 troubleshooting-docs reorganization:
+May 24 troubleshooting docs restore checkpoint:
 
 ```text
+Repository: https://github.com/jimsapbw/mastering-emr/tree/main/emr_migration_demo
+Branch: main
+Commit: 3fd1f9e Organize Spark troubleshooting docs
 Organized Spark troubleshooting docs under KT/spark_troubleshooting/
 Added client Spark UI prompt outcome examples
 Added Airflow DAG Entry-Point Prompt
@@ -460,10 +463,10 @@ Latest Step 12 troubleshooting playbook zip backup:
 s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-23_spark_troubleshooting_playbook_a81e5c1.zip
 ```
 
-Pending May 24 restore checkpoint backup:
+May 24 restore checkpoint backup:
 
 ```text
-GitHub commit: pending
+Troubleshooting docs commit: 3fd1f9e Organize Spark troubleshooting docs
 S3 zip backup: pending
 S3 explorable folder backup: pending
 ```
