@@ -6,6 +6,27 @@ This guide explains how to troubleshoot the EMR baseline jobs and collect eviden
 
 The goal is to identify where the pipeline spends time, which Spark operators are expensive, and which parts may improve later on Databricks.
 
+## Index
+
+| Section | Use When |
+|---|---|
+| [Main Tooling](#main-tooling) | Choosing Spark UI, Spark History, Jobs, Stages, SQL, Executors, or Environment tabs. |
+| [Live UI Vs History UI](#live-ui-vs-history-ui) | Deciding how to access live and completed Spark applications on EMR. |
+| [1. Confirm Runtime Configuration](#1-confirm-runtime-configuration) | Capturing AQE, skew handling, shuffle partitions, broadcast threshold, and executor settings. |
+| [2. Build Join And Table Size Inventory](#2-build-join-and-table-size-inventory) | Understanding join sides, table sizes, broadcast behavior, and missing count evidence. |
+| [3. Find The Longest Job](#3-find-the-longest-job) | Choosing which job/query to investigate first. |
+| [4. Find Expensive Stages](#4-find-expensive-stages) | Selecting bottleneck stages and classifying stage symptoms. |
+| [4.1 Diagnose Skew](#41-diagnose-skew) | Comparing max vs median task size/duration for skew. |
+| [4.2 Diagnose Memory Pressure](#42-diagnose-memory-pressure) | Interpreting GC, memory spill, disk spill, and peak execution memory. |
+| [4.3 Diagnose Partition Sizing And Task Waves](#43-diagnose-partition-sizing-and-task-waves) | Distinguishing too many small partitions from too few heavy partitions. |
+| [5. Identify Operators](#5-identify-operators) | Mapping stages to physical operators, action lines, and source-code paths. |
+| [6. Use Explain Plans From Code Or Shell](#6-use-explain-plans-from-code-or-shell) | Validating or comparing physical plans from code or shell. |
+| [Completion Gate Before Scaling Up](#completion-gate-before-scaling-up) | Deciding whether a dataset scale is fully analyzed before moving larger. |
+| [What To Capture For The EMR Baseline](#what-to-capture-for-the-emr-baseline) | Recording run evidence for baseline comparison. |
+| [Step-Specific Notes](#step-specific-notes) | Reviewing demo-specific converter and BRBF notes. |
+| [Mapping To Databricks And Photon](#mapping-to-databricks-and-photon) | Translating source-platform evidence into Databricks/Photon opportunity categories. |
+| [Key Questions To Answer During Analysis](#key-questions-to-answer-during-analysis) | Final sanity questions for the migration story. |
+
 ## Main Tooling
 
 Use the Spark UI while the application is running, or Spark History Server after the application finishes.
@@ -1086,6 +1107,142 @@ Spark UI -> SQL
 
 Click the SQL query or DataFrame action.
 
+Worked entry-point example from the Step 12 small BRBF run:
+
+```text
+Stage 38
+-> Job 22
+-> SQL Query 8
+-> count at BrbfJob.scala:80
+-> count over the persisted joined DataFrame
+-> upstream joined DataFrame code path
+-> 200-partition Exchanges around eligible_user_data and feature_log joins
+```
+
+This example shows the key distinction:
+
+```text
+BrbfJob.scala:80 is the action line that triggered execution.
+The expensive work comes from upstream transformations that build the joined DataFrame.
+```
+
+Simple meaning:
+
+```text
+Spark is lazy.
+The code at BrbfJob.scala:80 asks Spark to count joined.
+That count forces Spark to finally run all the joins and projections needed to create joined.
+So the slow stage is not caused by the count function itself.
+The count function exposes the cost of the join pipeline behind joined.
+```
+
+For the small run, the source-code mapping is:
+
+```text
+Action:
+  BrbfJob.scala:80
+  joined.count()
+
+Upstream transformation block:
+  BrbfJob.scala joined DataFrame construction
+  bids
+    -> impressions
+    -> contextual
+    -> advertiser
+    -> koa_settings
+    -> eligible_user_data
+    -> feature_log
+    -> sib
+
+Physical plan clues:
+  InMemoryRelation / InMemoryTableScan for the persisted joined DataFrame
+  ShuffledHashJoin on bid_request_id, user_id_hash for eligible_user_data
+  ShuffledHashJoin on user_id_hash, contextual_id for feature_log
+  Exchange hashpartitioning(..., 200)
+  BroadcastHashJoin for smaller dimensions
+  UDF projections before joins
+```
+
+Use this pattern in client environments:
+
+```text
+SQL/job detail gives the action line.
+The physical plan gives operator fingerprints.
+Source-code search maps those fingerprints to the transformation block.
+```
+
+What to do next in Step 5:
+
+```text
+1. Start with the action line from Spark History:
+     count at BrbfJob.scala:80
+
+2. Open the physical plan for the linked SQL query:
+     SQL Query 8
+
+3. Find the operators that match the bottleneck symptoms:
+     Stage 38 has 200 small balanced tasks.
+     Look for Exchange hashpartitioning(..., 200).
+
+4. Identify which joins or aggregates sit near those Exchanges:
+     eligible_user_data join on bid_request_id, user_id_hash
+     feature_log join on user_id_hash, contextual_id
+
+5. Search the source code for those table names and join keys:
+     eligible_user_data
+     feature_log
+     bid_request_id
+     user_id_hash
+     contextual_id
+
+6. Connect the source block back to the Spark finding:
+     the joined DataFrame construction creates the shuffle-heavy plan.
+     joined.count() triggers that plan.
+```
+
+Small-run key finding:
+
+```text
+Stage 38 is slow mainly because Spark processes many small shuffle partitions in waves.
+The stage has 200 tasks, about 12 task slots, and about 17 task waves.
+Each task reads only about 2 MiB median shuffle data.
+Skew, memory pressure, scheduler delay, shuffle fetch wait, and executor imbalance are not the main evidence.
+The likely issue is static spark.sql.shuffle.partitions=200 for this small workload.
+```
+
+Why still map operators, joins, and tables after identifying too many small partitions:
+
+```text
+Stage metrics tell us the symptom:
+  too many small balanced tasks.
+
+Physical operators tell us where the symptom came from:
+  Exchange hashpartitioning(..., 200).
+
+Joins and tables tell us why Spark needed that Exchange:
+  shuffled joins for eligible_user_data and feature_log.
+
+Code mapping tells us where the source behavior lives:
+  joined DataFrame construction, triggered by joined.count().
+
+Databricks mapping tells us which migration feature may help:
+  AQE partition coalescing can reduce tiny shuffle partitions.
+  AQE join strategy may help only if join-side sizes support it.
+  Photon may speed supported joins/aggregates/scans/writes, but does not by itself remove excessive task waves.
+```
+
+So the Step 5 question is not:
+
+```text
+Is the stage slow?
+```
+
+The Step 5 question is:
+
+```text
+Which operator and code path created the small-partition stage, and what platform/code feature could change that behavior?
+```
+
 Look at the physical plan and operators.
 
 Common operators:
@@ -1170,6 +1327,43 @@ Stage metrics show many small tasks and low spill
 
 ### 6. Use Explain Plans From Code Or Shell
 
+This step comes after the Spark History mapping step.
+
+Use Spark History first when analyzing a completed production/client run:
+
+```text
+Spark History tells you what actually happened in the run.
+```
+
+Use `explain` after that when you want to connect code to expected Spark plans or compare possible changes:
+
+```text
+explain tells you what Spark plans to do for a DataFrame.
+```
+
+When to use this step:
+
+```text
+Before changing code:
+  confirm which joins, Exchanges, aggregates, sorts, scans, or UDFs the code creates.
+
+After changing code:
+  compare whether the physical plan changed in the intended way.
+
+When Spark History does not clearly show an operator:
+  reproduce the DataFrame plan from code or shell and inspect it directly.
+
+When evaluating migration opportunities:
+  compare plans with AQE enabled, different shuffle partition settings, removed repartitions, native-expression rewrites, or changed join hints.
+```
+
+This step is not a replacement for Section 5.
+
+```text
+Section 5 maps observed runtime evidence back to operators and code.
+Section 6 helps validate or compare the physical plans created by that code.
+```
+
 Before running a job, use:
 
 ```scala
@@ -1198,6 +1392,58 @@ UDF projections
 ```
 
 This is useful when linking code changes to physical operators.
+
+Demo example:
+
+```text
+Spark History finding:
+  Stage 38 -> Job 22 -> Query 8 -> count at BrbfJob.scala:80
+
+Code finding:
+  BrbfJob.scala:80 runs joined.count().
+
+Meaning:
+  joined.count() is the action that forces Spark to execute the upstream joined DataFrame.
+  To inspect the plan from code or a Databricks notebook, add explain right before that action.
+```
+
+Example Scala snippet:
+
+```scala
+println("=== joined explain formatted ===")
+joined.explain("formatted")
+
+println("=== joined count ===")
+val joinedCount = joined.count()
+println(s"joined_row_count=$joinedCount")
+```
+
+What to compare against Spark History:
+
+```text
+Exchange hashpartitioning(..., 200)
+  Confirms the static 200 shuffle partition behavior seen in Stage 38.
+
+ShuffledHashJoin / SortMergeJoin / BroadcastHashJoin
+  Confirms which join operators the joined DataFrame creates.
+
+InMemoryRelation / InMemoryTableScan
+  Confirms whether the count is reading from a persisted DataFrame.
+
+UDF projections before joins
+  Flags code that may be less friendly to Photon/native expression optimization.
+```
+
+For a Databricks baseline notebook, keep both pieces of evidence:
+
+```text
+Notebook explain plan:
+  shows the expected plan and Databricks optimization clues.
+
+Databricks Spark UI after execution:
+  proves the actual runtime behavior, including AQE changes, task count, shuffle size,
+  coalesced partitions, spill, GC, and Photon runtime impact.
+```
 
 ## Completion Gate Before Scaling Up
 

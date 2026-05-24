@@ -467,8 +467,39 @@ May 24 restore checkpoint backup:
 
 ```text
 Troubleshooting docs commit: 3fd1f9e Organize Spark troubleshooting docs
+Latest restore checkpoint commit subject: Add Databricks troubleshooting prompt flow
 S3 zip backup: pending
 S3 explorable folder backup: pending
+```
+
+May 24 Spark troubleshooting prompt checkpoint:
+
+```text
+Troubleshooting docs now live under KT/spark_troubleshooting/.
+Each main troubleshooting doc has an index/table of contents, except README.
+
+Small-run source analysis through Guide Step 5 is documented:
+  Stage 38 -> Job 22 -> SQL Query 8 -> count at BrbfJob.scala:80
+  Stage 38 is likely dominated by too many small shuffle partitions/task waves.
+  The source-side follow-up prompts now cover skew, memory pressure, and small shuffle partitions.
+
+Step 6 explain-plan guidance is documented:
+  add df.explain("formatted") immediately before the expensive action or write.
+  For the demo, add joined.explain("formatted") before joined.count().
+  Use Databricks explain output as expected-plan evidence, not runtime proof.
+
+Client Spark UI prompt sequence is aligned across the plan and cheat sheet:
+  1. source-side investigation through Stage Operator And Code Mapping
+  2. matching source-side follow-up prompt, if needed
+  3. Databricks-side validation prompts
+
+New Databricks-side prompts added:
+  Explain Insertion Prompt
+  Databricks Explain Plan Interpretation Prompt
+  Databricks Genie Explain Prompt Builder
+  Databricks Count Baseline Prompt
+  Databricks Baseline Run Interpretation Prompt
+  Databricks Genie Baseline Prompt Builder
 ```
 
 Latest explorable S3 folder backup:
@@ -684,7 +715,10 @@ Executor balance looked healthy:
 
 Likely current hypothesis:
   too many small shuffle partitions / task-wave overhead for available parallelism.
-  With about 8 task slots and 200 shuffle tasks, Spark needs about 25 task waves.
+  Spark History Executors summary showed 12 active executor cores / approximate task slots.
+  With 200 shuffle tasks, Spark needs about 17 task waves.
+  Median task duration was about 4 s, so expected wave time was about 68 s.
+  Observed Stage 38 duration was about 96 s.
 ```
 
 Important physical plan findings from the longest query:

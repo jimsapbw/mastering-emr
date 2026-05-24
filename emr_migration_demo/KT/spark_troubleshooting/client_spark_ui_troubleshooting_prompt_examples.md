@@ -12,9 +12,180 @@ Use this file to understand what a good prompt result should look like before us
 
 The examples are organized by dataset scale and prompt type.
 
+## Index
+
+| Section | Use When |
+|---|---|
+| [Small Dataset Examples](#small-dataset-examples) | Reviewing worked prompt outputs for the small demo dataset. |
+| [Airflow DAG Entry-Point Prompt](#airflow-dag-entry-point-prompt) | Seeing the expected output for Airflow-to-Spark entry-point discovery. |
+| [Stage Operator And Code Mapping Prompt](#stage-operator-and-code-mapping-prompt) | Seeing the expected Section 5 stage/operator/code mapping output. |
+| [Medium Dataset Examples](#medium-dataset-examples) | Placeholder for future medium-scale worked examples. |
+
 ## Small Dataset Examples
 
-### Physical Plan To Code Mapping Prompt
+### Airflow DAG Entry-Point Prompt
+
+Use this example before the demo has a real Airflow DAG file.
+
+This is based on:
+
+```text
+KT/airflow_orchestration_plan.md
+KT/11_package_upload_run_emr_steps.md
+KT/12_scale_data_and_tune_runtime.md
+spark/src/main/scala/com/demo/emr/
+```
+
+Because the actual Airflow DAG is not implemented yet, treat this as a planned-DAG / EMR-step-definition example. Update this example after the real DAG exists.
+
+Example output:
+
+#### Execution Path
+
+```text
+Airflow DAG/task
+-> EmrAddStepsOperator, planned
+-> existing EMR cluster or configured EMR cluster id
+-> EMR step using command-runner.jar
+-> spark-submit
+-> Scala main class from --class
+-> Spark History Server application
+-> jobs/stages/SQL operators
+```
+
+Planned demo pipeline:
+
+```text
+FeatureLogConverter
+-> EligibleUserDataLogConverter
+-> BrbfJob
+```
+
+#### Task Inventory
+
+| DAG id | Task id | Operator | Launch pattern | Cluster/app target | Spark entry point | Key args | Logs/count hints | Missing follow-up |
+|---|---|---|---|---|---|---|---|---|
+| pending | `submit_feature_log_converter` | `EmrAddStepsOperator`, planned | EMR step on existing or selected EMR cluster | cluster id/name from Airflow config or variable | `com.demo.emr.FeatureLogConverter` | `--bucket`, `--base-prefix`, `--run-date`, `--hour`, `--late-hour`, `--output-mode` | converter logs, EMR step logs, Spark History app | actual DAG file, cluster lookup variable, step sensor task |
+| pending | `submit_eligible_user_data_converter` | `EmrAddStepsOperator`, planned | EMR step | same EMR cluster | `com.demo.emr.EligibleUserDataLogConverter` | same runtime args | converter logs, EMR step logs, Spark History app | actual DAG dependency/sensor details |
+| pending | `submit_brbf_job` | `EmrAddStepsOperator`, planned | EMR step | same EMR cluster | `com.demo.emr.BrbfJob` | same runtime args | `brbf_job.*` printed metrics from driver logs; Spark History app | actual DAG file and step-to-application lookup |
+
+#### Scala Entry-Point Clues
+
+For Scala jobs, the important Airflow/EMR clue is:
+
+```text
+--class com.demo.emr.FeatureLogConverter
+--class com.demo.emr.EligibleUserDataLogConverter
+--class com.demo.emr.BrbfJob
+```
+
+Those map to source files:
+
+```text
+spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala
+spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala
+spark/src/main/scala/com/demo/emr/BrbfJob.scala
+```
+
+#### Spark Submit Shape
+
+Example BRBF step:
+
+```text
+spark-submit
+--deploy-mode client
+--class com.demo.emr.BrbfJob
+s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar
+--bucket aigithub-emr-2026
+--base-prefix emr-migration-demo-small
+--run-date 2026-05-21
+--hour 10
+--late-hour 11
+--output-mode overwrite
+```
+
+#### Search Terms Used
+
+For a client GitLab repo, useful searches are:
+
+```text
+EmrAddStepsOperator
+EmrStepSensor
+job_flow_id
+cluster_id
+cluster_name
+command-runner.jar
+spark-submit
+--class
+main_class
+s3://
+BrbfJob
+FeatureLogConverter
+EligibleUserDataLogConverter
+```
+
+For this demo, useful searches are:
+
+```text
+com.demo.emr.FeatureLogConverter
+com.demo.emr.EligibleUserDataLogConverter
+com.demo.emr.BrbfJob
+emr-migration-demo-0.1.0.jar
+emr-migration-demo-small
+```
+
+#### Where Counts / Audit Evidence May Come From
+
+For this demo, the strongest count evidence is in Spark driver logs because `BrbfJob` prints metrics such as:
+
+```text
+brbf_job.source_bids_count
+brbf_job.source_impressions_count
+brbf_job.joined_row_count
+brbf_job.joined_impression_match_count
+brbf_job.joined_feature_log_match_count
+brbf_job.final_output_count
+```
+
+In a real Airflow DAG, look for:
+
+```text
+validation tasks after each EMR step
+Airflow task logs that capture driver stdout
+EMR step logs
+CloudWatch logs
+Spark History application id
+audit/reconciliation table updates
+```
+
+#### Missing Access / Metadata
+
+Because this is not a real Airflow DAG yet, these remain pending:
+
+```text
+actual DAG id
+actual task ids
+Airflow connection id
+cluster lookup variable or hard-coded cluster id
+EMR step sensor tasks
+how Airflow records EMR step ids
+how Airflow links EMR step id to YARN/Spark app id
+actual task logs
+retry/timeout/SLA settings
+validation/audit task definitions
+```
+
+#### Conservative Conclusion
+
+```text
+The demo does not yet have an implemented Airflow DAG, but the planned orchestration pattern is clear:
+Airflow should submit three EMR steps with EmrAddStepsOperator, each using command-runner.jar and spark-submit with a Scala --class entry point.
+
+The most important code-entry clues are the --class values, especially com.demo.emr.BrbfJob for the expensive Spark History investigation.
+Once an actual DAG exists, the next step is to map one Airflow task instance to its EMR step id, then to the Spark History application.
+```
+
+### Stage Operator And Code Mapping Prompt
 
 Use this example after identifying:
 
@@ -267,6 +438,34 @@ Stage 38 itself is balanced, low-GC, and low-spill, with 200 small tasks reading
 This supports the current bottleneck classification of too many small shuffle partitions / task-wave overhead, likely influenced by fixed spark.sql.shuffle.partitions=200 and the upstream joined DataFrame shape.
 
 Search GitLab for joined_row_count, joined.count(), eligible_user_data, feature_log, user_id_hash, contextual_id, and spark.sql.shuffle.partitions to confirm the exact source block.
+```
+
+#### 9. Executive Databricks / Photon Summary
+
+```text
+Main finding:
+  Stage 38 is not slow because of obvious skew or memory pressure.
+  It is slow because Spark created 200 small shuffle tasks and processed them in many waves.
+
+AQE partition coalescing:
+  Our finding: Stage 38 had 200 tiny shuffle tasks from Exchange hashpartitioning(..., 200), tied to the joined DataFrame path and shuffled joins around eligible_user_data and feature_log.
+  What it can fix: AQE can coalesce those small shuffle partitions at runtime so Spark runs fewer task waves.
+
+AQE join strategy:
+  Our finding: eligible_user_data and feature_log used ShuffledHashJoin, while smaller dimensions used BroadcastHashJoin.
+  What it can fix: If table stats show a join side is small enough, Databricks may switch some shuffle joins to broadcast joins.
+
+Photon:
+  Our finding: the plan uses native operators like FileScan, BroadcastHashJoin, ShuffledHashJoin, HashAggregate, Sort, and WriteFiles.
+  What it can improve: Photon can accelerate supported native scans, joins, aggregations, sorts, and writes.
+
+UDF review:
+  Our finding: Scala UDF projections appear before joins.
+  What to watch: Photon is less helpful for opaque UDF logic, so native Spark SQL rewrites may expose more optimization.
+
+Delta/statistics/layout:
+  Our finding: join decisions depend on table sizes and stats.
+  What it can improve: Better stats and layout can improve pruning, join planning, and shuffle behavior.
 ```
 
 ## Medium Dataset Examples

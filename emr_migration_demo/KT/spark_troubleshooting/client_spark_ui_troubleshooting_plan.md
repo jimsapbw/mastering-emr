@@ -12,6 +12,35 @@ Worked prompt-output examples live in:
 KT/spark_troubleshooting/client_spark_ui_troubleshooting_prompt_examples.md
 ```
 
+## Index
+
+| Section | Use When |
+|---|---|
+| [Preferred Access](#preferred-access) | Asking what client observability and metadata access are needed. |
+| [First Step: Trace The Airflow Task](#first-step-trace-the-airflow-task) | Finding the Airflow task, EMR/Spark target, and Scala/Python entry point. |
+| [Second Step: Confirm Runtime Configuration](#second-step-confirm-runtime-configuration) | Capturing AQE, shuffle partitions, executor sizing, and Spark settings. |
+| [Recommended Source Of Truth](#recommended-source-of-truth) | Deciding which evidence source should be trusted for current-state analysis. |
+| [Baseline Sequence](#baseline-sequence) | Framing source baseline, Databricks baseline, and optimized target runs. |
+| [Operator Evidence To Collect](#operator-evidence-to-collect) | Deciding which Spark operators and metrics to capture. |
+| [Photon Mapping](#photon-mapping) | Mapping physical operators to Photon-friendly and less friendly patterns. |
+| [Troubleshooting Checklist](#troubleshooting-checklist) | Running the end-to-end client Spark UI investigation flow. |
+| [Airflow DAG Entry-Point Prompt](#airflow-dag-entry-point-prompt) | Prompting for Airflow-to-Spark trace and code entry point discovery. |
+| [Runtime Configuration Prompt](#runtime-configuration-prompt) | Prompting for Spark runtime setting capture. |
+| [Airflow Count Discovery Prompt](#airflow-count-discovery-prompt) | Prompting for counts and audit evidence from DAG/logs. |
+| [Physical Plan Bottleneck Prompt](#physical-plan-bottleneck-prompt) | Prompting for operator, Exchange, join, and bottleneck inventory. |
+| [Spark Stage Size Prompt](#spark-stage-size-prompt) | Prompting for join/table-size evidence from Spark History. |
+| [Bottleneck Stage Metrics Prompt](#bottleneck-stage-metrics-prompt) | Prompting for skew, memory, partition, and executor-balance classification. |
+| [Stage Operator And Code Mapping Prompt](#stage-operator-and-code-mapping-prompt) | Prompting for Section 5 stage/operator/code mapping. |
+| [Skew Follow-Up Prompt](#skew-follow-up-prompt) | Deep-diving a likely skew stage. |
+| [Memory Pressure Follow-Up Prompt](#memory-pressure-follow-up-prompt) | Deep-diving GC/spill/memory pressure. |
+| [Small Shuffle Partitions Follow-Up Prompt](#small-shuffle-partitions-follow-up-prompt) | Deep-diving tiny partitions and task-wave overhead. |
+| [Explain Insertion Prompt](#explain-insertion-prompt) | Prompting for where to add `explain` in source code or a Databricks notebook. |
+| [Databricks Explain Plan Interpretation Prompt](#databricks-explain-plan-interpretation-prompt) | Summarizing Databricks explain output and expected optimization clues. |
+| [Databricks Genie Explain Prompt Builder](#databricks-genie-explain-prompt-builder) | Building a Genie prompt from source findings and Databricks explain output. |
+| [Databricks Count Baseline Prompt](#databricks-count-baseline-prompt) | Building a Databricks-side count/cardinality baseline when source counts are missing. |
+| [Databricks Baseline Run Interpretation Prompt](#databricks-baseline-run-interpretation-prompt) | Interpreting Databricks baseline Spark UI/runtime results. |
+| [Databricks Genie Baseline Prompt Builder](#databricks-genie-baseline-prompt-builder) | Building a Genie prompt from source findings and Databricks baseline metrics. |
+
 ## Preferred Access
 
 Ask for access to the current platform's Spark observability surfaces:
@@ -1134,9 +1163,11 @@ Important:
 - Do not claim Databricks will improve it without explaining which feature maps to the evidence.
 ```
 
-## Physical Plan To Code Mapping Prompt
+## Stage Operator And Code Mapping Prompt
 
-Use this prompt after you have:
+Use this prompt for the Section 5 analysis step, also called SNBM #2 in the small-load checklist.
+
+Use it after you have:
 
 ```text
 Airflow DAG entry point
@@ -1147,12 +1178,25 @@ expensive stage metrics
 physical plan for the selected SQL query
 ```
 
-The goal is to turn Spark UI evidence into GitLab search clues and likely source-code locations.
+The goal is to turn a bottleneck stage into a specific operator and code-path explanation.
+
+In short:
 
 ```text
-I am mapping an expensive Spark SQL query and stage back to source code in a client GitLab repository.
+Stage metrics tell us the symptom.
+The physical plan tells us the operator that created the symptom.
+The code mapping tells us where that behavior lives in the source.
+```
 
-Please use the SQL query details, stage metrics, and physical plan to produce code-search clues and a likely source-code mapping.
+```text
+I am doing the Section 5 stage/operator/code mapping for an expensive Spark stage.
+
+Please use the SQL query details, stage metrics, and physical plan to map the bottleneck stage back to:
+1. the Spark SQL physical operator or operator boundary,
+2. the action line that triggered execution,
+3. the likely upstream transformation code path,
+4. code-search clues for a client GitLab repository,
+5. Databricks / Photon opportunity signals for later validation.
 
 Context:
 - Airflow DAG id:
@@ -1167,6 +1211,8 @@ Context:
 - Associated job ids:
 - Expensive job id:
 - Expensive stage id:
+- How the stage was selected:
+  - longest stage / highest shuffle / highest spill / skewed tasks / repeated pattern / other
 - Bottleneck classification:
   - skew / memory pressure / too many small partitions / too few heavy partitions / executor imbalance / expensive join / expensive aggregate / expensive write / unknown
 
@@ -1185,7 +1231,12 @@ Known GitLab context:
 
 Please produce:
 
-1. Action-line mapping
+1. Spark History linkage
+   Build the observed runtime chain:
+   Airflow task -> Spark application -> SQL query -> job id -> stage id -> action line.
+   Mark any missing link as pending.
+
+2. Action-line mapping
    Identify the action that triggered this query if visible:
    - count
    - write/parquet/save/saveAsTable
@@ -1193,7 +1244,17 @@ Please produce:
    - foreachBatch
    Explain that this action line triggers execution but may not be the transformation that caused the expensive stage.
 
-2. Operator fingerprints
+3. Stage-to-operator hypothesis
+   For the expensive stage, identify the most likely physical operator or operator boundary:
+   - scan stage
+   - shuffle write stage
+   - shuffle read/join stage
+   - aggregate stage
+   - sort/write stage
+   - final single-partition count/collect stage
+   Explain what evidence supports the mapping and what remains uncertain.
+
+4. Operator fingerprints
    Extract code-search fingerprints from the physical plan:
    - FileScan paths or table names
    - selected columns
@@ -1206,7 +1267,7 @@ Please produce:
    - UDF / ScalaUDF / PythonUDF expressions
    - write operators
 
-3. GitLab search terms
+5. GitLab search terms
    Provide targeted search terms grouped by purpose:
    - entry point search
    - source dataset/table/path search
@@ -1215,23 +1276,13 @@ Please produce:
    - UDF search
    - output/write search
 
-4. Likely code areas
+6. Likely code areas
    Create a mapping table:
 
    Spark evidence                    Code clue/search term              Likely source area              Confidence
    <Exchange/join/FileScan/UDF>       <term>                             <file/class/block if known>     high/medium/low
 
-5. Stage-to-operator hypothesis
-   For the expensive stage, identify the most likely physical operator or operator boundary:
-   - scan stage
-   - shuffle write stage
-   - shuffle read/join stage
-   - aggregate stage
-   - sort/write stage
-   - final single-partition count/collect stage
-   Explain what evidence supports the mapping and what remains uncertain.
-
-6. What to verify in code
+7. What to verify in code
    Once the source file is opened, tell me exactly what to check:
    - whether there is a manual repartition/coalesce
    - whether broadcast is explicit or optimizer-chosen
@@ -1241,7 +1292,7 @@ Please produce:
    - whether write partitioning/sort/orderBy is intentional
    - whether repeated count/show/write actions trigger repeated jobs
 
-7. Databricks / Photon opportunity signals
+8. Databricks / Photon opportunity signals
    While this prompt should not recommend code changes yet, tag each mapped code area with possible follow-up categories:
    - AQE partition coalescing:
      fixed shuffle partitions, many small shuffle tasks, unnecessary manual repartition
@@ -1263,9 +1314,48 @@ Please produce:
    Code area / operator        Current evidence        Databricks/Photon follow-up category        Confirmed or inferred
    ?                           ?                       ?                                           confirmed/inferred
 
-8. Current-state conclusion
+9. Section 5 completion summary
+   Write a concise evidence summary:
+   - what stage was mapped
+   - what SQL query/job/action it belongs to
+   - what physical operator or operator boundary likely explains the stage
+   - what source transformation block should be inspected
+   - what remains uncertain
+
+10. Current-state conclusion
    Write a conservative conclusion using this format:
    The expensive stage belongs to <SQL query/action>. The physical plan points to <operator/fingerprint>. Search GitLab for <terms> in <entry point/module>. This likely maps to <transformation block>, but exact line-level mapping requires source-code confirmation.
+
+11. Executive Databricks / Photon summary
+   End with a short plain-language summary for a client or stakeholder.
+   Use this format:
+
+   ```text
+   Main finding:
+     <one sentence about why the stage is slow>
+
+   AQE partition coalescing:
+     Our finding: <specific Exchange / partition / operator / join evidence>
+     What it can fix: <how AQE could reduce task waves or partition overhead>
+
+   AQE join strategy:
+     Our finding: <specific shuffle join / broadcast join / table-size evidence>
+     What it can fix: <how better stats/AQE could change join strategy, if supported by data size>
+
+   Photon:
+     Our finding: <specific native operators from the plan>
+     What it can improve: <supported native scans / joins / aggregations / sorts / writes>
+
+   UDF review:
+     Our finding: <specific UDF or opaque expression evidence>
+     What to watch: <why Photon may be less helpful unless logic is rewritten or exposed>
+
+   Delta/statistics/layout:
+     Our finding: <specific scan / stats / file / join-planning evidence>
+     What it can improve: <pruning, stats, file sizing, join planning, shuffle behavior>
+   ```
+
+   Keep this section concise. Tie every Databricks/Photon point to evidence already listed above.
 
 Important:
 - Do not claim the physical plan alone gives exact Scala/Python line numbers unless the SQL/job detail explicitly shows them.
@@ -1507,6 +1597,212 @@ Please produce:
 Keep the conclusion tied to evidence. Do not call it scheduler delay unless Scheduler Delay metrics are actually high; task-wave overhead can happen even when per-task Scheduler Delay is low.
 ```
 
+## Explain Insertion Prompt
+
+Use this prompt after the Stage Operator And Code Mapping Prompt, when you have a likely action line and transformation path.
+
+The goal is to decide exactly where to add `explain("formatted")` in source code or a Databricks notebook before running a baseline.
+
+```text
+I have mapped an expensive Spark stage/query back to a likely action line and upstream transformation.
+
+Please help me identify where to insert Spark explain statements so I can compare the source-platform Spark History plan with a Databricks notebook or code baseline.
+
+Context:
+- Source platform:
+- Target platform:
+- Main class / notebook / script:
+- Spark History SQL query id/name:
+- Associated job ids:
+- Expensive stage id:
+- SQL/job action line:
+  - example: count at SomeJob.scala:80, parquet at Writer.scala:59, saveAsTable at Job.scala:120
+- Stage/operator/code mapping findings:
+<paste Stage Operator And Code Mapping Prompt findings here>
+
+Relevant code snippet:
+<paste the source code around the action line and upstream DataFrame construction here>
+
+Tasks:
+
+1. Identify the action that triggers execution:
+   - count
+   - write/parquet/save/saveAsTable
+   - collect/show/take
+   - foreachBatch
+   - other
+
+2. Identify the DataFrame or Dataset variable that should receive `explain`.
+   Explain why this variable is the right one.
+
+3. Identify where to place the explain statement:
+   - immediately before the action
+   - before persist/cache, if needed
+   - before write, if write is the expensive action
+   - before repeated actions, if the same DataFrame is executed more than once
+
+4. Provide a minimal Scala/Python snippet.
+   For Scala, prefer:
+
+   ```scala
+   println("=== <name> explain formatted ===")
+   <df>.explain("formatted")
+
+   println("=== <name> action ===")
+   val result = <df>.<action>
+   ```
+
+5. Recommend optional extra explain points only if useful:
+   - after major join construction
+   - before/after repartition or coalesce
+   - before persist/cache
+   - before final write
+
+6. Tell me what to compare between the explain output and Spark History:
+   - Exchange hashpartitioning / rangepartitioning / SinglePartition
+   - number of shuffle partitions
+   - join strategy
+   - scan paths and filters
+   - UDF projections
+   - aggregates, sorts, writes
+   - AdaptiveSparkPlan if AQE is enabled
+
+Return:
+
+Recommended insertion:
+File/notebook | Approx location | DataFrame | Explain line | Action line | Reason
+
+Minimal code snippet:
+<code>
+
+Comparison checklist:
+<what to compare with Spark History>
+
+Warnings:
+<anything that could make code explain differ from executed Spark UI plan, such as AQE, caching, reused DataFrames, or different input/config>
+```
+
+## Databricks Explain Plan Interpretation Prompt
+
+Use this prompt after adding `explain("formatted")` or `explain("extended")` to the Databricks baseline notebook/code.
+
+The goal is to summarize what Databricks appears likely to improve, before treating runtime as proven.
+
+```text
+I am reviewing a Databricks explain plan for a migrated Spark workload.
+
+Please interpret the explain output against the source-platform bottleneck findings.
+
+Context:
+- Source platform:
+- Databricks runtime:
+- Photon enabled:
+- AQE enabled:
+- Cluster shape:
+- Source Spark History finding:
+<paste Stage Operator And Code Mapping Prompt summary here>
+
+Databricks explain output:
+<paste explain("formatted") or explain("extended") output here>
+
+Tasks:
+
+1. Identify whether the Databricks plan still contains the source bottleneck patterns:
+   - Exchange hashpartitioning(..., N)
+   - too many small shuffle partitions
+   - ShuffledHashJoin / SortMergeJoin where broadcast might be possible
+   - BroadcastHashJoin / BroadcastExchange
+   - Sort / aggregate / write operators
+   - UDF projections before joins or filters
+
+2. Check for Databricks/AQE plan signals:
+   - AdaptiveSparkPlan
+   - coalesced shuffle partitions
+   - changed join strategy
+   - local shuffle reader
+   - broadcast conversion
+   - skew handling indicators
+
+3. Map explain-plan evidence to Databricks opportunity categories:
+   - AQE partition coalescing
+   - AQE join strategy / broadcast
+   - AQE skew handling
+   - Photon-friendly native operators
+   - UDF/native-expression rewrite opportunity
+   - Delta/statistics/layout opportunity
+
+4. Distinguish:
+   - confirmed by explain output
+   - likely but requires Spark UI runtime metrics
+   - not visible from explain output
+
+5. Produce a simple executive summary:
+   - what Databricks may improve
+   - what still needs a baseline run to prove
+   - what may still require code/data-layout changes
+
+Return:
+
+Plan comparison:
+Source finding | Databricks explain evidence | Same/changed/unknown | Meaning
+
+Optimization signals:
+Category | Evidence | Confirmed by explain? | Needs runtime proof?
+
+Executive summary:
+<short plain-language summary>
+
+Do not claim runtime improvement from explain alone. Treat explain as expected-plan evidence.
+```
+
+## Databricks Genie Explain Prompt Builder
+
+Use this prompt when you want ChatGPT to convert your source findings and Databricks explain output into a focused prompt for Databricks Genie.
+
+The goal is to ask Genie for workspace-native metadata, SQL/table stats, and Databricks plan interpretation without dumping the whole investigation history.
+
+```text
+I want to ask Databricks Genie a focused question about a migrated Spark workload explain plan.
+
+Please build a concise Genie prompt using the evidence below.
+
+Source Spark findings:
+<paste Stage Operator And Code Mapping Prompt findings here>
+
+Databricks explain findings:
+<paste Databricks explain plan or explain-plan interpretation here>
+
+Databricks context:
+- Workspace/catalog/schema:
+- Notebook or job name:
+- Cluster/runtime:
+- Photon enabled:
+- AQE enabled:
+- Input tables/paths:
+- Output table/path:
+- Date/partition filters:
+
+Tasks:
+
+1. Build a Databricks Genie prompt that asks for:
+   - table sizes and row counts for the input tables/partitions
+   - table statistics availability
+   - file counts and approximate bytes
+   - join-key distinct counts and null counts
+   - whether broadcast joins look reasonable
+   - whether Delta stats/layout could improve pruning or join planning
+   - how the Databricks explain plan maps to AQE/Photon opportunities
+
+2. Keep the Genie prompt specific to Databricks-accessible evidence.
+3. Avoid asking Genie to inspect EMR Spark History directly unless that evidence is pasted.
+4. Include a small result table format that Genie should return.
+
+Return only:
+
+Databricks Genie prompt:
+<prompt>
+```
+
 ## Databricks Count Baseline Prompt
 
 Use this prompt when source-side counts are unavailable or when creating the Databricks migration baseline:
@@ -1553,3 +1849,148 @@ Join            Left rows       Right rows       Candidate broadcast side       
 
 Do not claim performance improvement from these counts alone. Use them to support join strategy and broadcast/AQE investigation.
 ```
+## Databricks Baseline Run Interpretation Prompt
+
+Use this prompt after running the migrated workload in Databricks and collecting Spark UI/runtime evidence.
+
+The goal is to compare source-platform symptoms with Databricks baseline behavior.
+
+```text
+I ran a Databricks baseline for a migrated Spark workload.
+
+Please interpret the baseline run results against the source-platform bottleneck findings.
+
+Context:
+- Source platform:
+- Databricks runtime:
+- Photon enabled:
+- AQE enabled:
+- Cluster shape:
+- Input scale / partition:
+- Notebook/job name:
+
+Source Spark History finding:
+<paste Stage Operator And Code Mapping Prompt findings here>
+
+Databricks explain-plan summary, if available:
+<paste Databricks Explain Plan Interpretation Prompt result here>
+
+Databricks baseline runtime evidence:
+- total job/runtime:
+- longest SQL query:
+- associated jobs/stages:
+- expensive stage metrics:
+- number of tasks:
+- active cores/task slots:
+- shuffle read/write:
+- input size/records:
+- spill:
+- GC:
+- task duration percentiles:
+- task data-size percentiles:
+- executor balance:
+- Photon metrics, if visible:
+- AQE/final plan evidence, if visible:
+
+Tasks:
+
+1. Compare the source bottleneck with Databricks baseline:
+   - same bottleneck
+   - improved but still present
+   - shifted to a different operator/stage
+   - not enough evidence
+
+2. Recompute the task-wave mental model if task counts and slots are available.
+
+3. Check whether AQE changed behavior:
+   - fewer shuffle tasks
+   - coalesced partitions
+   - changed join strategy
+   - skew handling
+
+4. Check whether Photon likely helped:
+   - native scans
+   - projections/filters
+   - joins
+   - aggregations
+   - sorts/writes
+   - note any UDF-heavy sections that may not benefit much
+
+5. Identify remaining bottlenecks:
+   - skew
+   - memory pressure
+   - too many small partitions
+   - too few heavy partitions
+   - scan/file-layout issue
+   - write/file-size issue
+   - UDF/native-expression issue
+   - cluster sizing issue
+
+6. Produce a conservative before/after story:
+   - what improved
+   - what did not improve
+   - what moved
+   - what should be optimized next
+
+Return:
+
+Source vs Databricks comparison:
+Metric/finding | Source evidence | Databricks evidence | Interpretation
+
+Runtime diagnosis:
+<short diagnosis>
+
+Next optimization candidates:
+Priority | Candidate | Evidence | Validation step
+
+Executive summary:
+<short plain-language summary>
+
+Do not attribute improvement to Photon, AQE, or Delta unless the evidence supports it.
+```
+
+## Databricks Genie Baseline Prompt Builder
+
+Use this prompt when you want ChatGPT to convert source findings and Databricks baseline results into a focused Databricks Genie prompt.
+
+```text
+I want to ask Databricks Genie a focused question about a Databricks baseline run for a migrated Spark workload.
+
+Please build a concise Genie prompt using the evidence below.
+
+Source Spark findings:
+<paste Stage Operator And Code Mapping Prompt findings here>
+
+Databricks baseline findings:
+<paste Databricks Baseline Run Interpretation Prompt result or raw Databricks Spark UI metrics here>
+
+Databricks context:
+- Workspace/catalog/schema:
+- Notebook or job name:
+- Cluster/runtime:
+- Photon enabled:
+- AQE enabled:
+- Input tables/paths:
+- Output table/path:
+- Date/partition filters:
+
+Tasks:
+
+1. Build a Databricks Genie prompt that asks for:
+   - why the baseline run improved, regressed, or shifted bottlenecks
+   - table/file/statistics evidence supporting the runtime behavior
+   - whether AQE coalesced partitions or changed join strategy
+   - whether Photon-supported operators dominate the runtime
+   - whether UDFs, file layout, table stats, or write layout remain blockers
+   - concrete next validation queries or Spark UI checks
+
+2. Keep the prompt focused on Databricks-accessible evidence.
+3. Include a table format for Genie to return.
+4. Make the prompt conservative: Genie should distinguish proven runtime evidence from hypotheses.
+
+Return only:
+
+Databricks Genie prompt:
+<prompt>
+```
+

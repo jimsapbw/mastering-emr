@@ -10,6 +10,21 @@ Client Spark UI Troubleshooting Plan: client_spark_ui_troubleshooting_plan.md
 Prompt Outcome Examples: client_spark_ui_troubleshooting_prompt_examples.md
 ```
 
+## Index
+
+| Section | Use When |
+|---|---|
+| [The Core Loop](#the-core-loop) | Remembering the overall Spark troubleshooting sequence. |
+| [1. Find The Workload](#1-find-the-workload) | Tracing Airflow/EMR/Spark History application identity. |
+| [2. Confirm Runtime Config](#2-confirm-runtime-config) | Capturing AQE, shuffle partitions, broadcast threshold, and executor settings. |
+| [3. Find The Longest Job Or Query](#3-find-the-longest-job-or-query) | Choosing the first expensive query/job to inspect. |
+| [4. Find The Longest Stages](#4-find-the-longest-stages) | Selecting and triaging bottleneck stages. |
+| [5. Classify The Bottleneck](#5-classify-the-bottleneck) | Distinguishing skew, memory pressure, partition sizing, joins, sorts, and writes. |
+| [6. Map Stage Back To Code](#6-map-stage-back-to-code) | Connecting stage/operator evidence to source action and transformation code. |
+| [7. Databricks Translation](#7-databricks-translation) | Mapping evidence to AQE, Photon, Delta, stats, layout, and UDF opportunities. |
+| [Quick Prompt Order](#quick-prompt-order) | Choosing which client troubleshooting prompt to run next. |
+| [Current Demo Checkpoint](#current-demo-checkpoint) | Recalling the current small-run Stage 38 conclusion. |
+
 ## The Core Loop
 
 ```text
@@ -364,12 +379,18 @@ Use prompts from `client_spark_ui_troubleshooting_plan.md` in this order:
 4. Physical Plan Bottleneck Prompt
 5. Spark Stage Size Prompt
 6. Bottleneck Stage Metrics Prompt
-7. Physical Plan To Code Mapping Prompt
-8. Use the matching follow-up prompt:
+7. Stage Operator And Code Mapping Prompt
+8. Use the matching source-side follow-up prompt before leaving the source analysis:
      Skew Follow-Up Prompt
      Memory Pressure Follow-Up Prompt
      Small Shuffle Partitions Follow-Up Prompt
-9. Databricks Count Baseline Prompt, if source-side counts or join sizes are missing
+9. Use the matching Databricks-side prompt when moving from source findings to Databricks validation:
+     Explain Insertion Prompt, to place explain in code or notebook
+     Databricks Explain Plan Interpretation Prompt, after adding explain to the baseline
+     Databricks Genie Explain Prompt Builder, if you want a focused Genie question about the explain plan
+     Databricks Count Baseline Prompt, if source-side counts or join sizes are missing
+     Databricks Baseline Run Interpretation Prompt, after the baseline run completes
+     Databricks Genie Baseline Prompt Builder, if you want Genie to inspect baseline evidence
 ```
 
 ## Current Demo Checkpoint
