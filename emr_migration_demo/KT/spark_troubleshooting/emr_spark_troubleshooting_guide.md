@@ -1686,6 +1686,62 @@ Create a new EMR cluster with larger worker local/EBS disk from the start.
 Rerun only medium Step 3 first, because medium Steps 1 and 2 already completed on S3.
 ```
 
+Recommended new-cluster baseline:
+
+```text
+EMR release:
+  same as current if possible, EMR 7.13.0 / Spark 3.5.6-amzn-2
+
+Primary:
+  1 node, same or similar instance type
+
+Workers:
+  r8g.xlarge
+  4 core nodes
+  0 task nodes for first rerun
+  On-Demand purchasing for the first baseline rerun
+
+Worker disk:
+  gp3
+  300 GiB
+  3000 IOPS
+  125 MiB/s throughput
+  1 volume per instance
+
+Scaling:
+  managed scaling enabled
+  max cluster size 6 instances
+  max core nodes 4 instances
+  max On-Demand 6 instances
+
+Spark event log:
+  enabled
+
+Spark history dir:
+  hdfs:///var/log/spark/apps
+  or S3 if history must survive cluster termination
+```
+
+Recommended medium Step 3 submit-time overrides:
+
+```text
+--conf spark.sql.shuffle.partitions=400
+--conf spark.executor.cores=2
+--conf spark.sql.adaptive.enabled=true
+--conf spark.sql.adaptive.coalescePartitions.enabled=true
+--conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+--conf spark.shuffle.compress=true
+--conf spark.shuffle.spill.compress=true
+```
+
+Important implementation note:
+
+```text
+BrbfJob now sets AQE, skew handling, shuffle partitions, and default parallelism as defaults only.
+Submit-time --conf values can override those defaults.
+Rebuild and upload the JAR before rerunning Step 3, or the old hard-coded behavior may still be in S3.
+```
+
 If a new cluster is not possible immediately:
 
 ```text

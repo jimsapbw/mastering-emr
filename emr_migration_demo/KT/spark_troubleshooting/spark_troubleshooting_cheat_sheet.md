@@ -438,4 +438,29 @@ Current decision:
   create a restore checkpoint
   create a new cluster with larger worker local/EBS disk
   rerun only medium Step 3 first
+
+New cluster target:
+  EMR 7.13.0 / Spark 3.5.6-amzn-2 if possible
+  1 primary node
+  r8g.xlarge core nodes
+  4 core nodes
+  0 task nodes first
+  On-Demand for first baseline rerun
+  worker disk gp3, 300 GiB, 3000 IOPS, 125 MiB/s throughput, 1 volume per instance
+  managed scaling enabled
+  max cluster size 6, max core nodes 4, max On-Demand 6
+  Spark event log enabled
+
+Medium Step 3 first-rerun submit overrides:
+  --conf spark.sql.shuffle.partitions=400
+  --conf spark.executor.cores=2
+  --conf spark.sql.adaptive.enabled=true
+  --conf spark.sql.adaptive.coalescePartitions.enabled=true
+  --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+  --conf spark.shuffle.compress=true
+  --conf spark.shuffle.spill.compress=true
+
+Important:
+  rebuild and upload the JAR first
+  BrbfJob submit-time --conf overrides now work because in-code settings are defaults only
 ```

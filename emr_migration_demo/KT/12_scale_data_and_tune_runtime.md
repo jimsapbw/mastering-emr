@@ -319,10 +319,198 @@ Completed:
 small S3 prefix layout: PASS
 small data generation: PASS
 small raw data validation: PASS
+small EMR Step 1 FeatureLogConverter: COMPLETED
+small EMR Step 2 EligibleUserDataLogConverter: COMPLETED
+small EMR Step 3 BrbfJob: COMPLETED
+small Spark History troubleshooting: COMPLETED
+small conclusion: Stage 38 / Job 22 / SQL Query 8 / count at BrbfJob.scala:80
+small bottleneck classification: too many small shuffle partitions/task waves, not primary skew or memory pressure
 ```
 
-Next:
+Medium controlled baseline checkpoint:
 
 ```text
-Run the three EMR steps with --base-prefix emr-migration-demo-small.
+medium prefix:
+  s3://aigithub-emr-2026/emr-migration-demo-medium/
+
+MCBP #1 medium scale definition: PASS
+MCBP #2 medium S3 prefix layout: PASS
+MCBP #3 medium raw data generation: PASS
+MCBP #4 medium raw data validation: PASS
+MCBP #5 medium Step 1 FeatureLogConverter: COMPLETED
+  step id: s-05377242F3A87LPS5JUZ
+MCBP #6 medium Step 2 EligibleUserDataLogConverter: COMPLETED
+  step id: s-04508423OSLJSZBQW90K
+
+MCBP #7 medium Step 3 BrbfJob attempt 1: FAILED
+  cluster id: j-3S62AU5IR98MM
+  step id: s-0661117QH89RUU39ZQ1
+  application id: application_1779541486316_0010
+  job/stage: Job 20 / Stage 37.0
+  action: count at BrbfJob.scala:80
+  root cause: java.io.IOException: No space left on device
+
+MCBP #7 medium Step 3 BrbfJob attempt 2: FAILED
+  cluster id: j-3S62AU5IR98MM
+  step id: s-09085642ZQTGXNML2TKJ
+  application id: application_1779541486316_0011
+  controlled change: EMR scale-out plus --executor-cores 2
+  live UI reached: Job 20 / Stage 38
+  observed input: about 11.8 GiB over 200 tasks
+  result: failed before completing medium Step 3
+```
+
+Current decision:
+
+```text
+Stop tuning blindly on the current cluster.
+Create a restore checkpoint before infrastructure changes.
+Create a new EMR cluster with larger worker local/EBS disk from the start.
+Rerun only medium Step 3 first, because medium Steps 1 and 2 already wrote converted data to S3.
+```
+
+## Next Recommended Action
+
+Before creating or changing infrastructure, create a restore checkpoint:
+
+```bash
+aws s3 sync . \
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo/ \
+  --region us-east-1
+```
+
+If creating a zip backup from the repo root:
+
+```bash
+zip -r /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_disk_checkpoint.zip . \
+  -x '.git/*' \
+  -x 'spark/target/*'
+```
+
+Upload the zip:
+
+```bash
+aws s3 cp \
+  /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_disk_checkpoint.zip \
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_disk_checkpoint.zip \
+  --region us-east-1
+```
+
+Because `BrbfJob.scala` now lets `spark-submit --conf` override its baseline Spark defaults, rebuild and upload the JAR before the new-cluster rerun:
+
+```bash
+cd spark
+mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
+aws s3 cp target/*.jar s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/ --region us-east-1
+```
+
+Recommended new cluster shape:
+
+```text
+EMR release:
+  Same as current if possible: EMR 7.13.0 / Spark 3.5.6-amzn-2
+
+Primary node:
+  1 node, same or similar instance type
+
+Core nodes:
+  4 nodes
+
+Task nodes:
+  0 for first rerun
+
+Purchasing:
+  On-Demand for the baseline; avoid Spot for the first rerun
+
+Worker instance type:
+  r8g.xlarge
+
+Worker EBS/root disk:
+  gp3
+  300 GiB
+  3000 IOPS
+  125 MiB/s throughput
+  1 volume per instance
+
+Managed scaling:
+  enabled, but start with enough core nodes
+
+Max cluster size:
+  6 instances
+
+Max core nodes:
+  4 instances
+
+Max On-Demand:
+  6 instances
+
+Spark event log:
+  enabled
+
+Spark history dir:
+  hdfs:///var/log/spark/apps
+  or S3 if history must survive cluster termination
+```
+
+Why this shape:
+
+```text
+Medium Step 3 failed from worker local disk exhaustion during shuffle/spill, not just lack of CPU.
+The old cluster was not failing because the Scala code was wrong.
+The failing path creates a large joined/cached/shuffled pipeline at BrbfJob.scala:80.
+Bigger worker disks plus more distributed executors should give Spark enough local spill/shuffle room to complete.
+```
+
+After the restore checkpoint exists and the new JAR is uploaded, create the replacement EMR cluster with larger worker local/EBS disk, then rerun only medium Step 3.
+
+Do not rerun medium Step 1 or Step 2 first; they already completed and wrote converted data to:
+
+```text
+s3://aigithub-emr-2026/emr-migration-demo-medium/
+```
+
+Use this first-rerun Step 3 command style:
+
+```bash
+aws emr add-steps \
+  --region us-east-1 \
+  --cluster-id <new-cluster-id> \
+  --steps '[
+    {
+      "Name": "emr-migration-demo-medium-step-3-brbf-job-disk-baseline",
+      "ActionOnFailure": "CONTINUE",
+      "Type": "CUSTOM_JAR",
+      "Jar": "command-runner.jar",
+      "Args": [
+        "spark-submit",
+        "--deploy-mode", "client",
+        "--conf", "spark.sql.shuffle.partitions=400",
+        "--conf", "spark.executor.cores=2",
+        "--conf", "spark.sql.adaptive.enabled=true",
+        "--conf", "spark.sql.adaptive.coalescePartitions.enabled=true",
+        "--conf", "spark.serializer=org.apache.spark.serializer.KryoSerializer",
+        "--conf", "spark.shuffle.compress=true",
+        "--conf", "spark.shuffle.spill.compress=true",
+        "--class", "com.demo.emr.BrbfJob",
+        "s3://aigithub-emr-2026/emr-migration-demo/artifacts/jars/emr-migration-demo-0.1.0.jar",
+        "--bucket", "aigithub-emr-2026",
+        "--base-prefix", "emr-migration-demo-medium",
+        "--run-date", "2026-05-21",
+        "--hour", "10",
+        "--late-hour", "11",
+        "--output-mode", "overwrite"
+      ]
+    }
+  ]'
+```
+
+Preserve the same analysis discipline on the new run:
+
+```text
+1. Capture application id and step id.
+2. Confirm runtime configuration.
+3. Watch Job 20 / count at BrbfJob.scala:80 first.
+4. If Step 3 completes, validate final output and run the Spark UI prompt sequence.
+5. If Step 3 fails again, capture the first root-cause error before changing more settings.
+6. Keep the live Spark UI tunnel ready so Job 20 / Stage 37 or Stage 38 metrics can be captured during the run.
 ```

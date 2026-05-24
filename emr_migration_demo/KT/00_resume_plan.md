@@ -468,27 +468,17 @@ May 24 restore checkpoint backup:
 ```text
 Troubleshooting docs commit: 3fd1f9e Organize Spark troubleshooting docs
 Latest restore checkpoint commit subject: Add Databricks troubleshooting prompt flow
-Latest local zip checkpoint: /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
-Latest S3 zip checkpoint target: s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
-S3 explorable folder backup: pending
-```
-
-Upload latest MCBP zip checkpoint:
-
-```bash
-aws s3 cp \
-  /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
-  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
-  --region us-east-1
-```
-
-Download latest MCBP zip checkpoint:
-
-```bash
-aws s3 cp \
-  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
-  /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
-  --region us-east-1
+Local MCBP medium disk checkpoint zip created:
+  /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_disk_checkpoint.zip
+S3 zip backup: pending because this shell has no AWS credentials
+S3 zip target:
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_disk_checkpoint.zip
+S3 explorable folder backup: complete
+S3 explorable folder:
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo/
+GitHub local commit created in /mnt/tmp/mastering-emr-git-sync:
+  Add medium disk checkpoint and rerun config
+GitHub push: pending because this shell cannot prompt for GitHub HTTPS credentials
 ```
 
 May 24 Spark troubleshooting prompt checkpoint:
@@ -920,10 +910,30 @@ Current decision:
 - create a new EMR cluster with larger worker local/EBS disk from the start
 - rerun only medium Step 3 first, because medium Steps 1 and 2 already wrote converted data to S3
 
-Restore checkpoint:
-- local zip: /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
-- S3 zip: s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
-- download with: aws s3 cp s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip --region us-east-1
+New-cluster target:
+- same EMR release if possible: EMR 7.13.0 / Spark 3.5.6-amzn-2
+- 1 primary node
+- core instance type: r8g.xlarge
+- 4 core nodes
+- 0 task nodes for first rerun
+- Spot disabled; use On-Demand for the first baseline rerun
+- core worker EBS: gp3, 300 GiB, 3000 IOPS, 125 MiB/s throughput, 1 volume per instance
+- managed scaling enabled with max cluster size 6, max core nodes 4, max On-Demand 6
+- Spark event log enabled
+
+Before rerunning Step 3:
+- rebuild and upload the JAR because BrbfJob now allows submit-time --conf overrides by setting its baseline values only as defaults
+- do not rerun medium Steps 1 or 2 first
+- keep the live Spark UI tunnel ready for Job 20 / Stage 37 or 38
+
+Medium Step 3 first-rerun submit overrides:
+- --conf spark.sql.shuffle.partitions=400
+- --conf spark.executor.cores=2
+- --conf spark.sql.adaptive.enabled=true
+- --conf spark.sql.adaptive.coalescePartitions.enabled=true
+- --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+- --conf spark.shuffle.compress=true
+- --conf spark.shuffle.spill.compress=true
 
 Keep updating the resume plan, EMR troubleshooting guide, client Spark UI plan, prompt examples, and cheat sheet so the workflow remains copy/paste friendly for client Spark UI investigations.
 ```

@@ -22,10 +22,10 @@ object BrbfJob {
   private def run(spark: SparkSession, config: AppConfig): Unit = {
     import spark.implicits._
 
-    spark.conf.set("spark.sql.adaptive.enabled", "false")
-    spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "false")
-    spark.conf.set("spark.sql.shuffle.partitions", "200")
-    spark.conf.set("spark.default.parallelism", "200")
+    setDefaultSparkConf(spark, "spark.sql.adaptive.enabled", "false")
+    setDefaultSparkConf(spark, "spark.sql.adaptive.skewJoin.enabled", "false")
+    setDefaultSparkConf(spark, "spark.sql.shuffle.partitions", "200")
+    setDefaultSparkConf(spark, "spark.default.parallelism", "200")
 
     val bids = prepareBids(DatasetIO.readRaw(spark, config, "bids"))
     val impressions = prepareImpressions(
@@ -102,6 +102,12 @@ object BrbfJob {
 
     DatasetIO.writeFinal(finalOutput, config, "brbf")
     joined.unpersist()
+  }
+
+  private def setDefaultSparkConf(spark: SparkSession, key: String, value: String): Unit = {
+    if (spark.conf.getOption(key).isEmpty) {
+      spark.conf.set(key, value)
+    }
   }
 
   private def prepareBids(raw: DataFrame): DataFrame = {

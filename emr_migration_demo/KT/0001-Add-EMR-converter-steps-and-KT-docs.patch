@@ -1,0 +1,1717 @@
+From db5768aeedfb5f245736fb872cd64737a42fcab4 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Fri, 22 May 2026 15:27:05 +0000
+Subject: [PATCH] Add EMR converter steps and KT docs
+
+---
+ emr_migration_demo/KT/00_resume_plan.md       |  98 +++--
+ .../KT/08_feature_log_converter.md            | 347 ++++++++++++++++
+ .../KT/09_eligible_user_data_converter.md     | 352 +++++++++++++++++
+ emr_migration_demo/KT/README.md               |   4 +
+ .../KT/emr_baseline_problem_statement.md      | 288 ++++++++++++++
+ .../KT/emr_spark_troubleshooting_guide.md     | 373 ++++++++++++++++++
+ .../emr/EligibleUserDataLogConverter.scala    |  80 ++++
+ .../com/demo/emr/FeatureLogConverter.scala    |  72 ++++
+ 8 files changed, 1579 insertions(+), 35 deletions(-)
+ create mode 100644 emr_migration_demo/KT/08_feature_log_converter.md
+ create mode 100644 emr_migration_demo/KT/09_eligible_user_data_converter.md
+ create mode 100644 emr_migration_demo/KT/emr_baseline_problem_statement.md
+ create mode 100644 emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
+ create mode 100644 emr_migration_demo/spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala
+ create mode 100644 emr_migration_demo/spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala
+
+diff --git a/emr_migration_demo/KT/00_resume_plan.md b/emr_migration_demo/KT/00_resume_plan.md
+index f07c4db..0176af9 100644
+--- a/emr_migration_demo/KT/00_resume_plan.md
++++ b/emr_migration_demo/KT/00_resume_plan.md
+@@ -193,6 +193,67 @@ Reference:
+ emr_migration_demo/KT/07_shared_scala_utilities.md
+ ```
+ 
++### 8. Feature Log Converter
++
++Created the first EMR pipeline entry point:
++
++```text
++emr_migration_demo/spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala
++```
++
++Verified:
++
++```text
++Maven build: PASS
++FeatureLogConverter tiny S3 run: PASS
++```
++
++Observed:
++
++```text
++feature_log_converter.raw_feature_log_count=50000
++feature_log_converter.converted_feature_log_count=50000
++feature_log_converter.distinct_user_hash_count=40200
++feature_log_converter.distinct_contextual_count=13035
++```
++
++Reference:
++
++```text
++emr_migration_demo/KT/08_feature_log_converter.md
++```
++
++### 9. Eligible User Data Converter
++
++Created the second EMR pipeline entry point:
++
++```text
++emr_migration_demo/spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala
++```
++
++Verified:
++
++```text
++Maven build: PASS
++EligibleUserDataLogConverter tiny S3 run: PASS
++```
++
++Observed:
++
++```text
++eligible_user_data_converter.raw_matched_user_data_count=20000
++eligible_user_data_converter.converted_eligible_user_data_count=20000
++eligible_user_data_converter.eligible_user_count=5000
++eligible_user_data_converter.high_frequency_count=4000
++eligible_user_data_converter.low_frequency_count=16000
++```
++
++Reference:
++
++```text
++emr_migration_demo/KT/09_eligible_user_data_converter.md
++```
++
+ ## Important Commands
+ 
+ Create S3 prefixes:
+@@ -250,39 +311,6 @@ sudo dnf install -y maven
+ 
+ ## Next Recommended Steps
+ 
+-### Step 08: Implement EMR Step 1
+-
+-Entry point:
+-
+-```text
+-com.demo.emr.FeatureLogConverter
+-```
+-
+-Purpose:
+-
+-```text
+-Read raw feature_log
+-Apply hash/time style transformations
+-Deduplicate/repartition
+-Write converted/feature_log
+-```
+-
+-### Step 09: Implement EMR Step 2
+-
+-Entry point:
+-
+-```text
+-com.demo.emr.EligibleUserDataLogConverter
+-```
+-
+-Purpose:
+-
+-```text
+-Read raw matched_user_data
+-Compute eligibility/frequency fields
+-Write converted/eligible_user_data
+-```
+-
+ ### Step 10: Implement EMR Step 3
+ 
+ Entry point:
+@@ -309,7 +337,7 @@ Build:
+ 
+ ```bash
+ cd emr_migration_demo/spark
+-mvn clean package
++mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
+ ```
+ 
+ Upload JAR:
+@@ -342,5 +370,5 @@ Only scale further after the EMR baseline works correctly.
+ Use this prompt in a future Codex session:
+ 
+ ```text
+-Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 08: implement FeatureLogConverter, the first EMR step for the BRBF before-DAG demo.
++Read emr_migration_demo/KT/00_resume_plan.md and continue from Step 10: implement BrbfJob, the main BRBF before-DAG job.
+ ```
+diff --git a/emr_migration_demo/KT/08_feature_log_converter.md b/emr_migration_demo/KT/08_feature_log_converter.md
+new file mode 100644
+index 0000000..7f3333c
+--- /dev/null
++++ b/emr_migration_demo/KT/08_feature_log_converter.md
+@@ -0,0 +1,347 @@
++# Step 08: Feature Log Converter
++
++## Purpose
++
++Implement the first real EMR pipeline step:
++
++```text
++com.demo.emr.FeatureLogConverter
++```
++
++This step reads raw feature-log Parquet, applies UDF-style conversion logic, deduplicates feature events, repartitions by the downstream join keys, and writes the converted feature-log dataset.
++
++This step also contributes to the broader EMR baseline problem statement:
++
++```text
++emr_migration_demo/KT/emr_baseline_problem_statement.md
++```
++
++## Source
++
++```text
++s3://aigithub-emr-2026/emr-migration-demo/raw/feature_log/year=2026/month=05/day=21/hour=10/
++```
++
++## Output
++
++```text
++s3://aigithub-emr-2026/emr-migration-demo/converted/feature_log/year=2026/month=05/day=21/hour=10/
++```
++
++## Scala Entry Point
++
++Added:
++
++```text
++emr_migration_demo/spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala
++```
++
++The converter:
++
++- reads `raw/feature_log`
++- normalizes `user_id`
++- preserves the source hash as `source_user_id_hash`
++- recomputes `user_id_hash` with the shared SHA-256 UDF
++- creates `user_uuid` with the shared stable UUID UDF
++- creates `contextual_join_key`
++- rounds `event_timestamp` into `rounded_event_time`
++- creates `feature_value_bucket`
++- drops duplicate `feature_event_id` rows
++- repartitions by `user_id_hash` and `contextual_id`
++- writes Snappy Parquet to `converted/feature_log`
++
++## Code Walkthrough
++
++`FeatureLogConverter` is the first real Spark pipeline step. Its job is to take the raw `feature_log` dataset, prepare stable join keys and time buckets, and write a converted feature-log dataset for the later BRBF job.
++
++The object itself is the application entry point:
++
++```scala
++object FeatureLogConverter
++```
++
++When this class is passed to `spark-submit` with:
++
++```bash
++--class com.demo.emr.FeatureLogConverter
++```
++
++Spark starts from this object's `main` method.
++
++The `main` method does three setup tasks:
++
++```scala
++val config = ArgsParser.parse(args)
++val spark = SparkSessionFactory.create("emr-migration-feature-log-converter")
++run(spark, config)
++```
++
++In simple terms:
++
++- `ArgsParser` reads command-line options like `--bucket`, `--run-date`, and `--hour`.
++- `SparkSessionFactory` creates the Spark session.
++- `run` contains the actual feature-log conversion logic.
++
++The raw feature log is read here:
++
++```scala
++val rawFeatureLog = DatasetIO.readRaw(spark, config, "feature_log")
++```
++
++For the current tiny run, that points to:
++
++```text
++s3://aigithub-emr-2026/emr-migration-demo/raw/feature_log/year=2026/month=05/day=21/hour=10/
++```
++
++The main transformation starts from:
++
++```scala
++val converted = rawFeatureLog
++```
++
++Then the job adds conversion columns.
++
++This cleans the user id:
++
++```scala
++.withColumn("normalized_user_id", lower(trim($"user_id")))
++```
++
++It lowercases and trims `user_id` so the downstream hash is stable.
++
++This keeps the original raw hash, then recomputes the canonical hash:
++
++```scala
++.withColumn("source_user_id_hash", $"user_id_hash")
++.withColumn("user_id_hash", Udfs.sha256String($"normalized_user_id"))
++```
++
++`source_user_id_hash` is useful for comparison/debugging. The new `user_id_hash` is the join key the rest of the Scala pipeline should use.
++
++This creates a stable UUID-style value from the user id:
++
++```scala
++.withColumn("user_uuid", Udfs.stableUuidFromString($"normalized_user_id"))
++```
++
++This creates a hashed contextual join key:
++
++```scala
++.withColumn("contextual_join_key", Udfs.sha256String($"contextual_id".cast("string")))
++```
++
++This rounds event timestamps into five-minute buckets:
++
++```scala
++.withColumn("rounded_event_time", Udfs.roundTimestampToMinutes(5)($"event_timestamp"))
++```
++
++This turns a numeric feature value into a simple label:
++
++```scala
++.withColumn("feature_value_bucket", ...)
++```
++
++The bucket values are:
++
++```text
++very_high
++high
++medium
++low
++```
++
++This removes duplicate feature events:
++
++```scala
++.dropDuplicates("feature_event_id")
++```
++
++The final `.select(...)` chooses the output columns and keeps them in a predictable order.
++
++Before writing, the job repartitions the converted data:
++
++```scala
++val output = converted.repartition($"user_id_hash", $"contextual_id")
++```
++
++This groups data by the keys that the later BRBF job will join on. It is intentionally part of the EMR baseline because it gives us a visible repartition/shuffle behavior to compare later.
++
++The job prints basic validation metrics:
++
++```scala
++printMetric("raw_feature_log_count", rawFeatureLog.count())
++printMetric("converted_feature_log_count", converted.count())
++printMetric("distinct_user_hash_count", converted.select($"user_id_hash").distinct().count())
++printMetric("distinct_contextual_count", converted.select($"contextual_id").distinct().count())
++```
++
++Finally, the converted data is written here:
++
++```scala
++DatasetIO.writeConverted(output, config, "feature_log")
++```
++
++For the current tiny run, that writes to:
++
++```text
++s3://aigithub-emr-2026/emr-migration-demo/converted/feature_log/year=2026/month=05/day=21/hour=10/
++```
++
++Short version:
++
++```text
++Read raw feature_log
++Clean user id
++Create hash and UUID join keys
++Round event time
++Bucket feature values
++Deduplicate feature events
++Repartition by downstream join keys
++Write converted feature_log
++```
++
++## Build Command
++
++Maven was not present in the new shell, so it was installed again:
++
++```bash
++sudo dnf install -y maven
++```
++
++The default Maven local repo path was not writable in this session, so the build used `/mnt/tmp`:
++
++```bash
++cd emr_migration_demo/spark
++mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
++```
++
++Observed:
++
++```text
++BUILD SUCCESS
++```
++
++## Run Command
++
++```bash
++spark-submit \
++  --master local[*] \
++  --class com.demo.emr.FeatureLogConverter \
++  emr_migration_demo/spark/target/emr-migration-demo-0.1.0.jar \
++  --bucket aigithub-emr-2026 \
++  --base-prefix emr-migration-demo \
++  --run-date 2026-05-21 \
++  --hour 10 \
++  --late-hour 11 \
++  --output-mode overwrite
++```
++
++Observed:
++
++```text
++feature_log_converter.raw_feature_log_count=50000
++feature_log_converter.converted_feature_log_count=50000
++feature_log_converter.distinct_user_hash_count=40200
++feature_log_converter.distinct_contextual_count=13035
++```
++
++Validation conclusion:
++
++```text
++PASS
++```
++
++The raw and converted row counts match for the tiny smoke dataset.
++
++## Manual Before/After Sample Check
++
++Use `spark-shell` to inspect a few raw and converted feature-log records side by side.
++
++```bash
++spark-shell
++```
++
++Then run:
++
++```scala
++val rawPath =
++  "s3://aigithub-emr-2026/emr-migration-demo/raw/feature_log/year=2026/month=05/day=21/hour=10/"
++
++val convertedPath =
++  "s3://aigithub-emr-2026/emr-migration-demo/converted/feature_log/year=2026/month=05/day=21/hour=10/"
++
++val raw = spark.read.parquet(rawPath)
++val converted = spark.read.parquet(convertedPath)
++
++val idsToCheck = Array(
++  "feature_event_0",
++  "feature_event_1",
++  "feature_event_10",
++  "feature_event_100",
++  "feature_event_1000"
++)
++```
++
++Raw sample:
++
++```scala
++raw
++  .where($"feature_event_id".isin(idsToCheck: _*))
++  .select(
++    "feature_event_id",
++    "user_id",
++    "user_id_hash",
++    "contextual_id",
++    "feature_value",
++    "event_timestamp"
++  )
++  .orderBy("feature_event_id")
++  .show(false)
++```
++
++Converted sample:
++
++```scala
++converted
++  .where($"feature_event_id".isin(idsToCheck: _*))
++  .select(
++    "feature_event_id",
++    "user_id",
++    "normalized_user_id",
++    "source_user_id_hash",
++    "user_id_hash",
++    "contextual_id",
++    "feature_value",
++    "feature_value_bucket",
++    "event_timestamp",
++    "rounded_event_time"
++  )
++  .orderBy("feature_event_id")
++  .show(false)
++```
++
++Expected observations:
++
++- `normalized_user_id` is added.
++- `source_user_id_hash` preserves the raw hash.
++- `feature_value_bucket` is added.
++- `rounded_event_time` rounds timestamps down to five-minute buckets.
++- `converted.count()` returns `50000`.
++
++## Notes
++
++The Spark run required elevated local execution because Spark needs local networking for the driver/executor services.
++
++A direct `aws s3 ls` check from this shell failed because the AWS CLI could not locate credentials, but Spark was able to read and write the S3 paths through the runtime environment used by `spark-submit`.
++
++## Next Recommended Step
++
++Step 09:
++
++```text
++com.demo.emr.EligibleUserDataLogConverter
++```
++
++Implement the converter for `raw/matched_user_data` into `converted/eligible_user_data`.
+diff --git a/emr_migration_demo/KT/09_eligible_user_data_converter.md b/emr_migration_demo/KT/09_eligible_user_data_converter.md
+new file mode 100644
+index 0000000..389edc6
+--- /dev/null
++++ b/emr_migration_demo/KT/09_eligible_user_data_converter.md
+@@ -0,0 +1,352 @@
++# Step 09: Eligible User Data Converter
++
++## Purpose
++
++Implement the second EMR pipeline step:
++
++```text
++com.demo.emr.EligibleUserDataLogConverter
++```
++
++This step reads raw matched-user data, prepares normalized user join keys, adds eligibility and frequency fields, and writes the converted eligible-user dataset for the later BRBF job.
++
++This step also contributes to the broader EMR baseline problem statement:
++
++```text
++emr_migration_demo/KT/emr_baseline_problem_statement.md
++```
++
++## Source
++
++```text
++s3://aigithub-emr-2026/emr-migration-demo/raw/matched_user_data/year=2026/month=05/day=21/hour=10/
++```
++
++## Output
++
++```text
++s3://aigithub-emr-2026/emr-migration-demo/converted/eligible_user_data/year=2026/month=05/day=21/hour=10/
++```
++
++## Scala Entry Point
++
++Added:
++
++```text
++emr_migration_demo/spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala
++```
++
++The converter:
++
++- reads `raw/matched_user_data`
++- normalizes `user_id`
++- preserves the source hash as `source_user_id_hash`
++- recomputes `user_id_hash` with the shared SHA-256 UDF
++- creates `user_uuid` with the shared stable UUID UDF
++- creates `bid_request_hash`
++- derives `frequency_bracket`
++- derives `eligibility_band`
++- creates numeric `eligible_user_flag`
++- deduplicates by `bid_request_id` and `user_id_hash`
++- repartitions by `user_id_hash` and `frequency_bracket`
++- writes Snappy Parquet to `converted/eligible_user_data`
++
++## Code Walkthrough
++
++`EligibleUserDataLogConverter` prepares user eligibility data for the main BRBF job. The raw dataset is called `matched_user_data`, but the converted output is called `eligible_user_data` because it is shaped for downstream eligibility joins.
++
++The object is the application entry point:
++
++```scala
++object EligibleUserDataLogConverter
++```
++
++When this class is passed to `spark-submit` with:
++
++```bash
++--class com.demo.emr.EligibleUserDataLogConverter
++```
++
++Spark starts from this object's `main` method.
++
++The `main` method parses runtime arguments, creates the Spark session, and calls `run`:
++
++```scala
++val config = ArgsParser.parse(args)
++val spark = SparkSessionFactory.create("emr-migration-eligible-user-data-converter")
++run(spark, config)
++```
++
++The raw matched-user dataset is read here:
++
++```scala
++val rawMatchedUserData = DatasetIO.readRaw(spark, config, "matched_user_data")
++```
++
++For the current tiny run, that points to:
++
++```text
++s3://aigithub-emr-2026/emr-migration-demo/raw/matched_user_data/year=2026/month=05/day=21/hour=10/
++```
++
++The main conversion starts from:
++
++```scala
++val converted = rawMatchedUserData
++```
++
++This cleans the user id:
++
++```scala
++.withColumn("normalized_user_id", lower(trim($"user_id")))
++```
++
++This keeps the raw hash and recomputes the canonical join hash:
++
++```scala
++.withColumn("source_user_id_hash", $"user_id_hash")
++.withColumn("user_id_hash", Udfs.sha256String($"normalized_user_id"))
++```
++
++This creates a stable UUID-style user key:
++
++```scala
++.withColumn("user_uuid", Udfs.stableUuidFromString($"normalized_user_id"))
++```
++
++This creates a hashed bid-request key:
++
++```scala
++.withColumn("bid_request_hash", Udfs.sha256String($"bid_request_id"))
++```
++
++This creates the high/low frequency split used by the main BRBF job:
++
++```scala
++.withColumn(
++  "frequency_bracket",
++  when($"normalized_user_id".startsWith("hot_user_"), lit("high")).otherwise(lit("low"))
++)
++```
++
++In the mock data, `hot_user_*` users represent the intentionally skewed high-frequency users.
++
++This turns the numeric score into an eligibility band:
++
++```scala
++.withColumn("eligibility_band", ...)
++```
++
++The values are:
++
++```text
++very_high
++high
++medium
++low
++```
++
++This creates a numeric flag from the boolean:
++
++```scala
++.withColumn("eligible_user_flag", when($"is_eligible" === true, lit(1)).otherwise(lit(0)))
++```
++
++This removes duplicate user/bid rows if any exist:
++
++```scala
++.dropDuplicates("bid_request_id", "user_id_hash")
++```
++
++Before writing, the job repartitions by downstream join/split keys:
++
++```scala
++val output = converted.repartition($"user_id_hash", $"frequency_bracket")
++```
++
++The job prints basic validation metrics:
++
++```scala
++raw_matched_user_data_count
++converted_eligible_user_data_count
++eligible_user_count
++high_frequency_count
++low_frequency_count
++```
++
++Finally, the converted dataset is written here:
++
++```scala
++DatasetIO.writeConverted(output, config, "eligible_user_data")
++```
++
++Short version:
++
++```text
++Read raw matched_user_data
++Clean user id
++Create user and bid hashes
++Create eligibility fields
++Create high/low frequency bracket
++Deduplicate
++Repartition by downstream keys
++Write converted eligible_user_data
++```
++
++## Build Command
++
++```bash
++cd emr_migration_demo/spark
++mvn -Dmaven.repo.local=/mnt/tmp/m2/repository clean package
++```
++
++Observed:
++
++```text
++BUILD SUCCESS
++```
++
++## Run Command
++
++```bash
++spark-submit \
++  --master local[*] \
++  --class com.demo.emr.EligibleUserDataLogConverter \
++  emr_migration_demo/spark/target/emr-migration-demo-0.1.0.jar \
++  --bucket aigithub-emr-2026 \
++  --base-prefix emr-migration-demo \
++  --run-date 2026-05-21 \
++  --hour 10 \
++  --late-hour 11 \
++  --output-mode overwrite
++```
++
++Observed:
++
++```text
++eligible_user_data_converter.raw_matched_user_data_count=20000
++eligible_user_data_converter.converted_eligible_user_data_count=20000
++eligible_user_data_converter.eligible_user_count=5000
++eligible_user_data_converter.high_frequency_count=4000
++eligible_user_data_converter.low_frequency_count=16000
++```
++
++Validation conclusion:
++
++```text
++PASS
++```
++
++The raw and converted row counts match for the tiny smoke dataset.
++
++## Manual Before/After Sample Check
++
++Use `spark-shell` to inspect a few raw matched-user records and converted eligible-user records.
++
++```bash
++spark-shell
++```
++
++Then run:
++
++```scala
++val rawMatchedPath =
++  "s3://aigithub-emr-2026/emr-migration-demo/raw/matched_user_data/year=2026/month=05/day=21/hour=10/"
++
++val convertedEligiblePath =
++  "s3://aigithub-emr-2026/emr-migration-demo/converted/eligible_user_data/year=2026/month=05/day=21/hour=10/"
++
++val rawMatched = spark.read.parquet(rawMatchedPath)
++val convertedEligible = spark.read.parquet(convertedEligiblePath)
++
++val bidIdsToCheck = Array(
++  "br_0",
++  "br_1",
++  "br_2",
++  "br_3",
++  "br_4"
++)
++```
++
++Raw sample:
++
++```scala
++rawMatched
++  .where($"bid_request_id".isin(bidIdsToCheck: _*))
++  .select(
++    "bid_request_id",
++    "user_id",
++    "user_id_hash",
++    "segment_id",
++    "is_eligible",
++    "eligibility_score"
++  )
++  .orderBy("bid_request_id")
++  .show(false)
++```
++
++Converted sample:
++
++```scala
++convertedEligible
++  .where($"bid_request_id".isin(bidIdsToCheck: _*))
++  .select(
++    "bid_request_id",
++    "bid_request_hash",
++    "user_id",
++    "normalized_user_id",
++    "source_user_id_hash",
++    "user_id_hash",
++    "segment_id",
++    "is_eligible",
++    "eligible_user_flag",
++    "eligibility_score",
++    "eligibility_band",
++    "frequency_bracket"
++  )
++  .orderBy("bid_request_id")
++  .show(false)
++```
++
++For wide output, use vertical mode:
++
++```scala
++convertedEligible
++  .where($"bid_request_id".isin(bidIdsToCheck: _*))
++  .select(
++    "bid_request_id",
++    "bid_request_hash",
++    "user_id",
++    "normalized_user_id",
++    "source_user_id_hash",
++    "user_id_hash",
++    "segment_id",
++    "is_eligible",
++    "eligible_user_flag",
++    "eligibility_score",
++    "eligibility_band",
++    "frequency_bracket"
++  )
++  .orderBy("bid_request_id")
++  .show(5, truncate = false, vertical = true)
++```
++
++Expected observations:
++
++- `normalized_user_id` is added.
++- `source_user_id_hash` preserves the raw hash.
++- `bid_request_hash` is added.
++- `eligible_user_flag` maps `true` to `1` and `false` to `0`.
++- `eligibility_band` is added.
++- `frequency_bracket` maps `hot_user_*` to `high`.
++- `convertedEligible.count()` returns `20000`.
++
++## Next Recommended Step
++
++Step 10:
++
++```text
++com.demo.emr.BrbfJob
++```
++
++Implement the main BRBF before-DAG job.
+diff --git a/emr_migration_demo/KT/README.md b/emr_migration_demo/KT/README.md
+index 8d33bb6..5642d57 100644
+--- a/emr_migration_demo/KT/README.md
++++ b/emr_migration_demo/KT/README.md
+@@ -12,7 +12,11 @@ This folder documents the EMR-side demo design and the commands executed as we b
+ 5. [GitHub Backup](./05_git_backup.md)
+ 6. [Scala Maven Spark Project](./06_scala_maven_spark_project.md)
+ 7. [Shared Scala Utilities](./07_shared_scala_utilities.md)
++8. [Feature Log Converter](./08_feature_log_converter.md)
++9. [Eligible User Data Converter](./09_eligible_user_data_converter.md)
+ 
+ ## References
+ 
+ - [Simple Scala App To Shared Utility App](./reference_simple_vs_utility_scala_app.md)
++- [EMR Baseline Problem Statement](./emr_baseline_problem_statement.md)
++- [EMR Spark Troubleshooting Guide](./emr_spark_troubleshooting_guide.md)
+diff --git a/emr_migration_demo/KT/emr_baseline_problem_statement.md b/emr_migration_demo/KT/emr_baseline_problem_statement.md
+new file mode 100644
+index 0000000..764c1f0
+--- /dev/null
++++ b/emr_migration_demo/KT/emr_baseline_problem_statement.md
+@@ -0,0 +1,288 @@
++# EMR Baseline Problem Statement
++
++## Purpose
++
++This demo intentionally builds an EMR Spark Scala baseline that behaves like a realistic BRBF-style ad-tech workload before migration improvements.
++
++The goal is not only to make the jobs work. The goal is to create a credible baseline with visible optimization opportunities that can later be improved and compared on Databricks.
++
++For the troubleshooting workflow and Spark UI evidence to capture, see:
++
++```text
++emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
++```
++
++## Problem Statement
++
++Build an EMR Spark Scala baseline that simulates a BRBF-style ad-tech pipeline. The baseline reads multiple S3-backed Parquet datasets, computes UDF-derived columns early, repartitions data manually, joins large and skewed datasets, handles high-frequency users through custom logic, and writes partitioned Parquet outputs.
++
++This baseline is intentionally designed to show:
++
++- UDF overhead
++- early derived-column expansion
++- manual repartitioning
++- shuffle pressure
++- skew-handling complexity
++- regular Parquet-on-S3 file layout
++
++Later, the Databricks version can improve or compare these areas using:
++
++- native Spark SQL/DataFrame expressions
++- Adaptive Query Execution
++- skew-aware join handling
++- better physical planning
++- Delta Lake layout and metadata features
++- less manual salting/repartitioning code
++
++Short version:
++
++```text
++We are building a realistic but intentionally old-school EMR Spark baseline:
++UDFs, early derived columns, manual repartitioning, skewed users, and Parquet on S3.
++
++Later, Databricks can improve it with native expressions, AQE, optimized joins,
++better layout, Delta, and less manual skew-handling code.
++```
++
++## Baseline Pain Points We Are Introducing
++
++### 1. UDF-Heavy Transformations
++
++The EMR baseline intentionally uses Scala UDFs for transformations such as:
++
++```text
++sha256String
++stableUuidFromString
++roundTimestampToMinutes
++```
++
++Why this matters:
++
++```text
++UDFs can hide logic from Spark's optimizer and add per-row execution overhead.
++```
++
++Later migration opportunity:
++
++```text
++Replace UDF-heavy logic with native Spark SQL/DataFrame functions where possible.
++```
++
++### 2. Early Derived-Column Creation
++
++The baseline creates derived columns before the main BRBF job consumes the data.
++
++Examples:
++
++```text
++normalized_user_id
++user_id_hash
++user_uuid
++bid_request_hash
++contextual_join_key
++rounded_event_time
++feature_value_bucket
++eligibility_band
++frequency_bracket
++```
++
++Why this matters:
++
++```text
++Adding columns early can increase row width before joins and shuffles.
++```
++
++Later migration opportunity:
++
++```text
++Defer nonessential derived columns until after filtering or joining when possible.
++```
++
++### 3. Manual Repartitioning
++
++The baseline manually repartitions converted data before writing.
++
++Why this matters:
++
++```text
++Manual repartitioning creates explicit shuffle stages and may not match the best runtime layout.
++```
++
++Later migration opportunity:
++
++```text
++Compare manual repartitioning against AQE, optimized writes, and better table layout.
++```
++
++### 4. Skew Setup
++
++The mock data intentionally creates hot users and hot keys. The converters preserve and expose this through fields such as:
++
++```text
++frequency_bracket
++```
++
++Why this matters:
++
++```text
++The main BRBF job can split high-frequency and low-frequency users and demonstrate manual skew handling.
++```
++
++Later migration opportunity:
++
++```text
++Compare custom skew handling and manual salting against Databricks/Spark adaptive skew optimizations.
++```
++
++### 5. Parquet-On-S3 Baseline
++
++The EMR baseline writes standard Snappy Parquet files to S3.
++
++Why this matters:
++
++```text
++Regular Parquet on S3 gives us a simple baseline without transaction logs, table statistics, or Delta-specific layout features.
++```
++
++Later migration opportunity:
++
++```text
++Compare against Delta Lake features such as metadata statistics, optimized file layout, and clustering strategies.
++```
++
++## Step Mapping
++
++### Step 08: FeatureLogConverter
++
++Entry point:
++
++```text
++com.demo.emr.FeatureLogConverter
++```
++
++Introduced baseline traits:
++
++- UDF-heavy transformations:
++
++```text
++user_id_hash         = Udfs.sha256String(normalized_user_id)
++user_uuid            = Udfs.stableUuidFromString(normalized_user_id)
++contextual_join_key  = Udfs.sha256String(contextual_id)
++rounded_event_time   = Udfs.roundTimestampToMinutes(5)(event_timestamp)
++```
++
++- Early derived columns:
++
++```text
++normalized_user_id
++source_user_id_hash
++user_id_hash
++user_uuid
++contextual_join_key
++rounded_event_time
++feature_value_bucket
++```
++
++- Manual repartitioning:
++
++```scala
++converted.repartition($"user_id_hash", $"contextual_id")
++```
++
++Purpose in the baseline:
++
++```text
++Prepare feature-log join keys and time buckets before the main BRBF job, while creating visible UDF and shuffle behavior.
++```
++
++### Step 09: EligibleUserDataLogConverter
++
++Entry point:
++
++```text
++com.demo.emr.EligibleUserDataLogConverter
++```
++
++Introduced baseline traits:
++
++- UDF-heavy transformations:
++
++```text
++user_id_hash      = Udfs.sha256String(normalized_user_id)
++user_uuid         = Udfs.stableUuidFromString(normalized_user_id)
++bid_request_hash  = Udfs.sha256String(bid_request_id)
++```
++
++- Early derived columns:
++
++```text
++normalized_user_id
++source_user_id_hash
++user_id_hash
++user_uuid
++bid_request_hash
++frequency_bracket
++eligibility_band
++eligible_user_flag
++```
++
++- Manual repartitioning:
++
++```scala
++converted.repartition($"user_id_hash", $"frequency_bracket")
++```
++
++- Skew setup:
++
++```text
++hot_user_* -> frequency_bracket = high
++all others -> frequency_bracket = low
++```
++
++Purpose in the baseline:
++
++```text
++Prepare user eligibility and high/low frequency split data before the main BRBF job, while making manual skew-handling inputs explicit.
++```
++
++## Shared Problem Across Steps 08 And 09
++
++Both converter steps intentionally introduce the same broad baseline pattern:
++
++```text
++Read raw Parquet
++Compute UDF-derived keys early
++Add downstream helper columns early
++Deduplicate
++Manually repartition
++Write converted Parquet
++```
++
++This gives the future migration comparison a clear before/after story:
++
++```text
++Before:
++  manual UDF-heavy EMR preprocessing jobs that create wide converted datasets and explicit shuffles
++
++After:
++  optimized Databricks pipeline with more native expressions, better planning, improved layout, and less manual shuffle/skew code
++```
++
++## Next Step Impact
++
++Step 10, `BrbfJob`, will consume both converted datasets:
++
++```text
++converted/feature_log
++converted/eligible_user_data
++```
++
++The main BRBF job should preserve the baseline story by:
++
++- computing more columns early
++- joining multiple large/skewed datasets
++- using high/low frequency branches
++- applying manual salting
++- unioning branches
++- sorting final output
++- writing Parquet to S3
+diff --git a/emr_migration_demo/KT/emr_spark_troubleshooting_guide.md b/emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
+new file mode 100644
+index 0000000..15a7c73
+--- /dev/null
++++ b/emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
+@@ -0,0 +1,373 @@
++# EMR Spark Troubleshooting Guide
++
++## Purpose
++
++This guide explains how to troubleshoot the EMR baseline jobs and collect evidence for the migration problem statement.
++
++The goal is to identify where the pipeline spends time, which Spark operators are expensive, and which parts may improve later on Databricks.
++
++## Main Tooling
++
++Use the Spark UI while the application is running, or Spark History Server after the application finishes.
++
++Important Spark UI tabs:
++
++```text
++Jobs
++Stages
++SQL
++Executors
++Environment
++```
++
++## Troubleshooting Workflow
++
++### 1. Confirm Runtime Configuration
++
++Go to:
++
++```text
++Spark UI -> Environment
++```
++
++Confirm key baseline settings such as:
++
++```text
++spark.sql.adaptive.enabled
++spark.sql.adaptive.skewJoin.enabled
++spark.sql.shuffle.partitions
++spark.default.parallelism
++spark.sql.autoBroadcastJoinThreshold
++spark.serializer
++spark.sql.parquet.compression.codec
++```
++
++For the EMR baseline, we expect AQE to be disabled or not relied on when running the final before-DAG workload.
++
++### 2. Find The Longest Job
++
++Go to:
++
++```text
++Spark UI -> Jobs
++```
++
++Look for:
++
++```text
++longest duration
++failed or retried jobs
++jobs with many stages
++jobs triggered by count/write/show actions
++```
++
++For our converters, `count()` and `write` actions create Spark jobs.
++
++For the main BRBF job, the final write will likely trigger the heaviest work.
++
++### 3. Find Expensive Stages
++
++Go to:
++
++```text
++Spark UI -> Stages
++```
++
++Capture:
++
++```text
++stage duration
++number of tasks
++shuffle read
++shuffle write
++memory spill
++disk spill
++input size
++output size
++task time variance
++failed/retried tasks
++```
++
++Important symptoms:
++
++```text
++Large shuffle read/write -> expensive Exchange/repartition/join/aggregate/sort
++High disk spill -> memory pressure or large shuffle/aggregate
++Few very slow tasks -> skew
++Many tiny tasks -> too many small partitions/files
++Very large tasks -> under-partitioning or skew
++```
++
++### 4. Diagnose Skew
++
++In the Stages tab, open a long-running stage and inspect task durations.
++
++Skew often looks like:
++
++```text
++Most tasks finish quickly.
++A few tasks run much longer.
++The whole stage waits on the slowest tasks.
++```
++
++Evidence to capture:
++
++```text
++max task duration
++median task duration
++shuffle read per task
++records read per task
++spill per task
++```
++
++This is especially important for the main BRBF job after high-frequency users and hot contextual keys are joined.
++
++### 5. Identify Operators
++
++Go to:
++
++```text
++Spark UI -> SQL
++```
++
++Click the SQL query or DataFrame action.
++
++Look at the physical plan and operators.
++
++Common operators:
++
++```text
++FileScan parquet
++Project
++Filter
++Exchange
++BroadcastExchange
++BroadcastHashJoin
++SortMergeJoin
++HashAggregate
++SortAggregate
++Sort
++Union
++BatchEvalPython
++ScalaUDF-related projection
++```
++
++The most important operator for shuffle diagnosis is:
++
++```text
++Exchange
++```
++
++`Exchange` means Spark reshuffled data. It usually appears around:
++
++```text
++repartition
++joins
++groupBy/aggregations
++sort/orderBy
++distinct/dropDuplicates
++```
++
++### 6. Use Explain Plans From Code Or Shell
++
++Before running a job, use:
++
++```scala
++df.explain("formatted")
++```
++
++or:
++
++```scala
++df.explain(true)
++```
++
++Use this to see:
++
++```text
++logical plan
++optimized logical plan
++physical plan
++join strategy
++Exchange nodes
++Sort nodes
++Aggregate nodes
++scan columns
++filters
++UDF projections
++```
++
++This is useful when linking code changes to physical operators.
++
++## What To Capture For The EMR Baseline
++
++For each important run, capture:
++
++```text
++application id
++step name
++input scale
++cluster size
++Spark config
++total runtime
++runtime by EMR step
++longest Spark job
++longest Spark stage
++shuffle read/write
++memory spill
++disk spill
++task duration variance
++join strategy
++final output row count
++```
++
++For screenshots, prioritize:
++
++```text
++Spark UI Jobs tab
++Spark UI Stages tab for the slowest stage
++Spark UI SQL tab physical plan
++Spark UI Executors tab
++Spark UI Environment tab
++```
++
++## Step-Specific Notes
++
++### Step 08: FeatureLogConverter
++
++Expected visible operators:
++
++```text
++FileScan parquet
++Project
++Scala UDF projections
++HashAggregate or Deduplicate-related aggregate
++Exchange from dropDuplicates
++Exchange from repartition
++Write parquet
++```
++
++Expected baseline symptoms:
++
++```text
++UDF-derived columns
++deduplication shuffle
++manual repartition shuffle
++Parquet write
++```
++
++Since the tiny dataset has only 50,000 rows, symptoms may be small.
++
++### Step 09: EligibleUserDataLogConverter
++
++Expected visible operators:
++
++```text
++FileScan parquet
++Project
++Scala UDF projections
++HashAggregate or Deduplicate-related aggregate
++Exchange from dropDuplicates
++Exchange from repartition
++Write parquet
++```
++
++Expected baseline symptoms:
++
++```text
++UDF-derived user and bid hashes
++eligibility/frequency projections
++deduplication shuffle
++manual repartition by user_id_hash and frequency_bracket
++Parquet write
++```
++
++Since the tiny dataset has only 20,000 rows, symptoms may be small.
++
++### Step 10: BrbfJob
++
++This is where the strongest baseline evidence should appear.
++
++Expected visible operators:
++
++```text
++multiple FileScan parquet operators
++Project with early derived columns
++BroadcastHashJoin for small dimensions
++SortMergeJoin or hash joins for larger joins
++Exchange around joins
++Exchange around manual salting/repartitioning
++HashAggregate
++Union
++Sort
++Write parquet
++```
++
++Expected baseline symptoms:
++
++```text
++wide rows before joins
++large shuffle read/write
++expensive join stages
++manual salting branch complexity
++high/low frequency branch split
++union pressure
++sort pressure
++skewed task durations
++spill risk
++```
++
++## Mapping To Databricks And Photon
++
++EMR Spark UI will not show Photon operators because Photon is Databricks-specific.
++
++However, EMR Spark UI does show the Spark operators that may later map to Photon-accelerated execution on Databricks.
++
++Likely Photon-friendly operators:
++
++```text
++Parquet/Delta scans
++Filter
++Project
++Hash joins
++Aggregations
++Sorts
++Window-style SQL operations
++```
++
++Less Photon-friendly or poor optimizer visibility:
++
++```text
++custom Scala UDF-heavy logic
++opaque per-row transformations
++manual skew-handling code that forces extra shuffles
++```
++
++Migration comparison idea:
++
++```text
++EMR baseline:
++  FileScan + UDF Project + Exchange + Join + Aggregate + Sort + Parquet write
++
++Databricks target:
++  Native expressions + AQE + Photon-friendly joins/aggregates/scans + Delta layout
++```
++
++## Key Questions To Answer During Analysis
++
++Use the Spark UI to answer:
++
++```text
++Which job took the longest?
++Which stage took the longest?
++Which operators created Exchanges?
++How much shuffle read/write happened?
++Did any stage spill to disk?
++Were task durations skewed?
++Which joins were broadcast joins vs sort-merge joins?
++Did UDF projections appear before major joins?
++Did manual repartitioning create extra shuffle stages?
++Did the final sort or union create visible pressure?
++```
++
++These answers become the evidence for why the Databricks migration can improve the workload.
+diff --git a/emr_migration_demo/spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala b/emr_migration_demo/spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala
+new file mode 100644
+index 0000000..22ffd28
+--- /dev/null
++++ b/emr_migration_demo/spark/src/main/scala/com/demo/emr/EligibleUserDataLogConverter.scala
+@@ -0,0 +1,80 @@
++package com.demo.emr
++
++import com.demo.emr.common.{ArgsParser, AppConfig, DatasetIO, SparkSessionFactory, Udfs}
++import org.apache.spark.sql.{DataFrame, SparkSession}
++import org.apache.spark.sql.functions._
++
++object EligibleUserDataLogConverter {
++  def main(args: Array[String]): Unit = {
++    val config = ArgsParser.parse(args)
++    val spark = SparkSessionFactory.create("emr-migration-eligible-user-data-converter")
++
++    try {
++      run(spark, config)
++    } finally {
++      spark.stop()
++    }
++  }
++
++  private def run(spark: SparkSession, config: AppConfig): Unit = {
++    import spark.implicits._
++
++    val rawMatchedUserData = DatasetIO.readRaw(spark, config, "matched_user_data")
++
++    val converted = rawMatchedUserData
++      .withColumn("normalized_user_id", lower(trim($"user_id")))
++      .withColumn("source_user_id_hash", $"user_id_hash")
++      .withColumn("user_id_hash", Udfs.sha256String($"normalized_user_id"))
++      .withColumn("user_uuid", Udfs.stableUuidFromString($"normalized_user_id"))
++      .withColumn("bid_request_hash", Udfs.sha256String($"bid_request_id"))
++      .withColumn(
++        "frequency_bracket",
++        when($"normalized_user_id".startsWith("hot_user_"), lit("high")).otherwise(lit("low"))
++      )
++      .withColumn(
++        "eligibility_band",
++        when($"eligibility_score" >= 75, lit("very_high"))
++          .when($"eligibility_score" >= 50, lit("high"))
++          .when($"eligibility_score" >= 25, lit("medium"))
++          .otherwise(lit("low"))
++      )
++      .withColumn(
++        "eligible_user_flag",
++        when($"is_eligible" === true, lit(1)).otherwise(lit(0))
++      )
++      .dropDuplicates("bid_request_id", "user_id_hash")
++      .select(
++        $"bid_request_id",
++        $"bid_request_hash",
++        $"user_id",
++        $"normalized_user_id",
++        $"source_user_id_hash",
++        $"user_id_hash",
++        $"user_uuid",
++        $"segment_id",
++        $"is_eligible",
++        $"eligible_user_flag",
++        $"eligibility_score",
++        $"eligibility_band",
++        $"frequency_bracket",
++        $"year",
++        $"month",
++        $"day",
++        $"hour"
++      )
++
++    val output = converted.repartition($"user_id_hash", $"frequency_bracket")
++
++    printMetric("raw_matched_user_data_count", rawMatchedUserData.count())
++    printMetric("converted_eligible_user_data_count", converted.count())
++    printMetric("eligible_user_count", converted.filter($"is_eligible" === true).count())
++    printMetric("high_frequency_count", converted.filter($"frequency_bracket" === "high").count())
++    printMetric("low_frequency_count", converted.filter($"frequency_bracket" === "low").count())
++
++    DatasetIO.writeConverted(output, config, "eligible_user_data")
++  }
++
++  private def printMetric(name: String, value: Long): Unit = {
++    println(s"eligible_user_data_converter.$name=$value")
++  }
++}
+diff --git a/emr_migration_demo/spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala b/emr_migration_demo/spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala
+new file mode 100644
+index 0000000..74a8c58
+--- /dev/null
++++ b/emr_migration_demo/spark/src/main/scala/com/demo/emr/FeatureLogConverter.scala
+@@ -0,0 +1,72 @@
++package com.demo.emr
++
++import com.demo.emr.common.{ArgsParser, AppConfig, DatasetIO, SparkSessionFactory, Udfs}
++import org.apache.spark.sql.{DataFrame, SparkSession}
++import org.apache.spark.sql.functions._
++
++object FeatureLogConverter {
++  def main(args: Array[String]): Unit = {
++    val config = ArgsParser.parse(args)
++    val spark = SparkSessionFactory.create("emr-migration-feature-log-converter")
++
++    try {
++      run(spark, config)
++    } finally {
++      spark.stop()
++    }
++  }
++
++  private def run(spark: SparkSession, config: AppConfig): Unit = {
++    import spark.implicits._
++
++    val rawFeatureLog = DatasetIO.readRaw(spark, config, "feature_log")
++
++    val converted = rawFeatureLog
++      .withColumn("normalized_user_id", lower(trim($"user_id")))
++      .withColumn("source_user_id_hash", $"user_id_hash")
++      .withColumn("user_id_hash", Udfs.sha256String($"normalized_user_id"))
++      .withColumn("user_uuid", Udfs.stableUuidFromString($"normalized_user_id"))
++      .withColumn("contextual_join_key", Udfs.sha256String($"contextual_id".cast("string")))
++      .withColumn("rounded_event_time", Udfs.roundTimestampToMinutes(5)($"event_timestamp"))
++      .withColumn(
++        "feature_value_bucket",
++        when($"feature_value" >= 0.75, lit("very_high"))
++          .when($"feature_value" >= 0.50, lit("high"))
++          .when($"feature_value" >= 0.25, lit("medium"))
++          .otherwise(lit("low"))
++      )
++      .dropDuplicates("feature_event_id")
++      .select(
++        $"feature_event_id",
++        $"user_id",
++        $"normalized_user_id",
++        $"source_user_id_hash",
++        $"user_id_hash",
++        $"user_uuid",
++        $"contextual_id",
++        $"contextual_join_key",
++        $"feature_name",
++        $"feature_value",
++        $"feature_value_bucket",
++        $"event_timestamp",
++        $"rounded_event_time",
++        $"year",
++        $"month",
++        $"day",
++        $"hour"
++      )
++
++    val output = converted.repartition($"user_id_hash", $"contextual_id")
++
++    printMetric("raw_feature_log_count", rawFeatureLog.count())
++    printMetric("converted_feature_log_count", converted.count())
++    printMetric("distinct_user_hash_count", converted.select($"user_id_hash").distinct().count())
++    printMetric("distinct_contextual_count", converted.select($"contextual_id").distinct().count())
++
++    DatasetIO.writeConverted(output, config, "feature_log")
++  }
++
++  private def printMetric(name: String, value: Long): Unit = {
++    println(s"feature_log_converter.$name=$value")
++  }
++}
+-- 
+2.50.1
+

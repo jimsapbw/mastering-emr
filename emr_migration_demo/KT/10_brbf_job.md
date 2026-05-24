@@ -82,18 +82,20 @@ call run(spark, config)
 
 ### 2. Set Baseline Spark Config
 
-The job sets:
+The job sets default Spark config values only when they were not provided by `spark-submit --conf`:
 
 ```scala
-spark.conf.set("spark.sql.adaptive.enabled", "false")
-spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "false")
-spark.conf.set("spark.sql.shuffle.partitions", "200")
-spark.conf.set("spark.default.parallelism", "200")
+setDefaultSparkConf(spark, "spark.sql.adaptive.enabled", "false")
+setDefaultSparkConf(spark, "spark.sql.adaptive.skewJoin.enabled", "false")
+setDefaultSparkConf(spark, "spark.sql.shuffle.partitions", "200")
+setDefaultSparkConf(spark, "spark.default.parallelism", "200")
 ```
 
 This intentionally keeps the job as an EMR before-migration baseline.
 
 AQE and automatic skew handling are disabled so that the manual salting and shuffle pressure remain visible for later comparison.
+
+For controlled reruns, submit-time configs can override these defaults. For example, the medium disk-pressure rerun can use AQE and a higher shuffle partition count without editing this source file again.
 
 ### 3. Read The Input Datasets
 

@@ -498,4 +498,56 @@ Next recommended move:
 
 ## Medium Dataset Examples
 
-Pending.
+### Medium Step 3 Disk-Pressure Example
+
+Use this as the expected style when a medium or production-sized source run fails before a full Spark History analysis is possible.
+
+Prompt context:
+
+```text
+I am analyzing a medium Spark run that failed during the main BRBF job.
+
+Known context:
+- medium prefix: s3://aigithub-emr-2026/emr-migration-demo-medium/
+- medium Steps 1 and 2 completed and wrote converted data to S3
+- Step 3 action: count at BrbfJob.scala:80
+- attempt 1: step s-0661117QH89RUU39ZQ1, app application_1779541486316_0010, Job 20 / Stage 37.0
+- attempt 1 root cause: java.io.IOException: No space left on device
+- attempt 2: step s-09085642ZQTGXNML2TKJ, app application_1779541486316_0011
+- attempt 2 controlled change: EMR scale-out plus --executor-cores 2
+- attempt 2 live UI reached Job 20 / Stage 38 with about 11.8 GiB input over 200 tasks before failing
+
+Please classify the failure conservatively and tell me the next controlled action.
+```
+
+Expected answer shape:
+
+```text
+Main finding:
+  Medium Step 3 is failing from local disk/shuffle pressure during the joined.count() path, not from a proven code correctness issue.
+
+Evidence:
+  Attempt 1 failed in Job 20 / Stage 37.0 with java.io.IOException: No space left on device.
+  Attempt 2 progressed farther after scale-out and lower executor concurrency, reaching Job 20 / Stage 38 with about 11.8 GiB input over 200 tasks, but still failed.
+  The controlled change helped progress but did not make the workload reliable on the current cluster.
+
+Classification:
+  skew: unknown from completed history; do not claim primary skew without task median/max evidence.
+  memory pressure: possible but not proven as primary from the pasted evidence alone.
+  local disk pressure: confirmed by the No space left on device root cause.
+  partition sizing: still relevant because the stage uses 200 tasks, but partition tuning should not hide the disk-capacity finding.
+  infrastructure limit: likely, because the cluster instance groups showed no larger worker EBS allocation.
+
+Next controlled action:
+  Stop tuning blindly on the current cluster.
+  Create a restore checkpoint.
+  Create a new EMR cluster with larger worker local/EBS disk from the start.
+  Rerun only medium Step 3 first, because medium Steps 1 and 2 already completed on S3.
+
+If the rerun completes:
+  Validate final output.
+  Run the full Spark UI prompt sequence against the completed application.
+
+If the rerun fails:
+  Preserve the first root-cause error, failed stage, task failure text, and executor loss evidence before making another change.
+```
