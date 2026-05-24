@@ -22,6 +22,7 @@ The goal is to identify where the pipeline spends time, which Spark operators ar
 | [5. Identify Operators](#5-identify-operators) | Mapping stages to physical operators, action lines, and source-code paths. |
 | [6. Use Explain Plans From Code Or Shell](#6-use-explain-plans-from-code-or-shell) | Validating or comparing physical plans from code or shell. |
 | [Completion Gate Before Scaling Up](#completion-gate-before-scaling-up) | Deciding whether a dataset scale is fully analyzed before moving larger. |
+| [MCBP Medium Controlled Baseline Plan](#mcbp-medium-controlled-baseline-plan) | Running and diagnosing the controlled medium-load baseline. |
 | [What To Capture For The EMR Baseline](#what-to-capture-for-the-emr-baseline) | Recording run evidence for baseline comparison. |
 | [Step-Specific Notes](#step-specific-notes) | Reviewing demo-specific converter and BRBF notes. |
 | [Mapping To Databricks And Photon](#mapping-to-databricks-and-photon) | Translating source-platform evidence into Databricks/Photon opportunity categories. |
@@ -1533,6 +1534,163 @@ higher GC percentage
 hot keys or skewed aggregates
 joins that should or should not broadcast
 operators that map to AQE, Photon, Delta layout, or code changes
+```
+
+## MCBP Medium Controlled Baseline Plan
+
+MCBP means Medium Controlled Baseline Plan.
+
+Use this checklist after the small-load completion gate passes and before tuning code or Spark settings.
+
+Goal:
+
+```text
+Run the same BRBF workload on medium data with the same baseline code path.
+Do not optimize first.
+Use the medium run to discover whether the bottleneck evolves into skew, memory pressure,
+local disk pressure, heavier shuffle, write pressure, or balanced partitioning.
+```
+
+### MCBP Checklist
+
+```text
+1. Confirm medium scale definition.
+2. Create medium S3 prefix layout.
+3. Generate medium raw data.
+4. Validate medium raw data.
+5. Run medium Step 1: FeatureLogConverter.
+6. Run medium Step 2: EligibleUserDataLogConverter.
+7. Run medium Step 3: BrbfJob.
+8. If Step 3 completes, validate final output and run the Spark UI prompt sequence.
+9. If Step 3 fails, preserve the failed run as evidence before changing config.
+10. Rerun only after choosing one controlled change.
+```
+
+### Current Medium Checkpoint
+
+Medium scale definition:
+
+```text
+bids: 10,000,000
+impressions_feedback: 7,000,000
+contextual: 1,000,000
+matched_user_data: 1,000,000
+advertiser: 25,000
+koa_settings: 25,000
+feature_log: 3,000,000
+sib: 500,000
+```
+
+Completed:
+
+```text
+MCBP #1 medium scale confirmed.
+MCBP #2 S3 prefix created:
+  s3://aigithub-emr-2026/emr-migration-demo-medium/
+MCBP #3 medium raw data generated.
+MCBP #4 medium raw data validated.
+MCBP #5 FeatureLogConverter completed.
+MCBP #6 EligibleUserDataLogConverter completed.
+```
+
+Medium validation highlights:
+
+```text
+bids=10,000,000
+impressions_feedback_total=7,000,000
+feature_log=3,000,000
+matched_user_data=1,000,000
+sib=500,000
+
+top advertiser ids each have about 900,000 bid rows
+top contextual ids each have about 100,000 bid rows
+```
+
+### Medium Step 3 Attempt 1
+
+Attempt:
+
+```text
+EMR step id: s-0661117QH89RUU39ZQ1
+Application id: application_1779541486316_0010
+Action: count at BrbfJob.scala:80
+Job: 20
+Failed stage: Stage 37.0
+Result: FAILED
+```
+
+Root cause:
+
+```text
+java.io.IOException: No space left on device
+Executor Process Lost
+Task 85 in stage 37.0 failed 4 times
+```
+
+Interpretation:
+
+```text
+The medium joined.count() path exceeded available executor local disk during shuffle/intermediate processing.
+The later RPC and connection-refused messages are cascading symptoms after executor/driver shutdown.
+```
+
+### Medium Step 3 Attempt 2
+
+Controlled change:
+
+```text
+Raised EMR managed scaling maximums.
+Cluster scaled to 6 YARN nodes during the rerun.
+Reran only Step 3 with --executor-cores 2.
+```
+
+Attempt:
+
+```text
+EMR step id: s-09085642ZQTGXNML2TKJ
+Application id: application_1779541486316_0011
+Action: count at BrbfJob.scala:80
+Result: FAILED
+```
+
+Observed live Spark UI before failure:
+
+```text
+Job 20 ran for more than 15 minutes.
+Failed tasks increased while the job continued retrying.
+The run reached Stage 38:
+  count at BrbfJob.scala:80
+  200 tasks
+  input about 11.8 GiB
+  failed tasks already visible
+```
+
+Interpretation:
+
+```text
+Scale-out and lower executor concurrency helped the run progress farther than attempt 1,
+but did not make the medium Step 3 baseline complete reliably on this cluster.
+The likely remaining issue is still local disk/shuffle pressure on a cluster whose instance groups
+show no additional EBS size in the EMR console.
+```
+
+### Current MCBP Decision
+
+Do not keep tuning blindly on this cluster.
+
+Next recommended move:
+
+```text
+Create a restore checkpoint.
+Create a new EMR cluster with larger worker local/EBS disk from the start.
+Rerun only medium Step 3 first, because medium Steps 1 and 2 already completed on S3.
+```
+
+If a new cluster is not possible immediately:
+
+```text
+Use the failed medium attempts as the medium disk-pressure example.
+Optionally create a smaller medium-lite dataset for a successful Spark History analysis.
 ```
 
 ## What To Capture For The EMR Baseline

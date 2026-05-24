@@ -468,8 +468,27 @@ May 24 restore checkpoint backup:
 ```text
 Troubleshooting docs commit: 3fd1f9e Organize Spark troubleshooting docs
 Latest restore checkpoint commit subject: Add Databricks troubleshooting prompt flow
-S3 zip backup: pending
+Latest local zip checkpoint: /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
+Latest S3 zip checkpoint target: s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
 S3 explorable folder backup: pending
+```
+
+Upload latest MCBP zip checkpoint:
+
+```bash
+aws s3 cp \
+  /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
+  --region us-east-1
+```
+
+Download latest MCBP zip checkpoint:
+
+```bash
+aws s3 cp \
+  s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
+  /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip \
+  --region us-east-1
 ```
 
 May 24 Spark troubleshooting prompt checkpoint:
@@ -619,6 +638,7 @@ small EMR Step 2 EligibleUserDataLogConverter: COMPLETED on new cluster
 small EMR Step 3 BrbfJob: COMPLETED on new cluster
 small final output validation: PASS from prior small run; re-check if needed
 small Spark troubleshooting walkthrough: IN PROGRESS
+medium controlled baseline plan: IN PROGRESS
 ```
 
 Small data prefix:
@@ -732,6 +752,71 @@ The plan includes HashAggregate and count(distinct bid_request_id).
 The plan ends with Union, range partitioning, Sort, and WriteFiles to Parquet snappy.
 ```
 
+Medium Controlled Baseline Plan, MCBP, current status:
+
+```text
+MCBP #1 medium scale definition: PASS
+  bids: 10,000,000
+  impressions_feedback: 7,000,000
+  contextual: 1,000,000
+  matched_user_data: 1,000,000
+  advertiser: 25,000
+  koa_settings: 25,000
+  feature_log: 3,000,000
+  sib: 500,000
+
+MCBP #2 medium S3 prefix layout: PASS
+  s3://aigithub-emr-2026/emr-migration-demo-medium/
+
+MCBP #3 medium raw data generation: PASS
+  total raw objects observed: 1168
+  total raw size observed: about 1.31 GiB
+
+MCBP #4 medium raw data validation: PASS
+  counts.bids=10000000
+  counts.impressions_feedback_total=7000000
+  counts.feature_log=3000000
+  counts.matched_user_data=1000000
+  counts.sib=500000
+  top advertiser ids each have about 900000 bid rows
+  top contextual ids each have about 100000 bid rows
+
+MCBP #5 medium Step 1 FeatureLogConverter: COMPLETED
+  step id: s-05377242F3A87LPS5JUZ
+
+MCBP #6 medium Step 2 EligibleUserDataLogConverter: COMPLETED
+  step id: s-04508423OSLJSZBQW90K
+
+MCBP #7 medium Step 3 BrbfJob attempt 1: FAILED
+  step id: s-0661117QH89RUU39ZQ1
+  application id: application_1779541486316_0010
+  action: count at BrbfJob.scala:80
+  job id: 20
+  failed stage: Stage 37.0
+  root cause: java.io.IOException: No space left on device
+  interpretation: executor local disk exhausted during shuffle/intermediate processing
+
+MCBP #7 medium Step 3 BrbfJob attempt 2: FAILED
+  step id: s-09085642ZQTGXNML2TKJ
+  application id: application_1779541486316_0011
+  controlled change: EMR managed scaling max raised, cluster scaled to 6 YARN nodes, rerun with --executor-cores 2
+  live UI observed Job 20 count at BrbfJob.scala:80 running more than 15 minutes
+  live UI observed Stage 38 active with 200 tasks and about 11.8 GiB input
+  failed tasks increased before final failure
+  interpretation: scale-out helped the run progress farther but did not make medium Step 3 reliable on this cluster
+```
+
+Current MCBP decision:
+
+```text
+Do not keep tuning blindly on this cluster.
+Create a restore checkpoint.
+Create a new EMR cluster with larger worker local/EBS disk from the start.
+Rerun only medium Step 3 first because medium Steps 1 and 2 already completed on S3.
+
+If a new cluster is deferred, keep the two failed medium attempts as the medium disk-pressure example.
+```
+
 Resume action as of 5:00 P.M. EST on 2026-05-23:
 
 ```text
@@ -809,5 +894,36 @@ emr_migration_demo/KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md, KT/spark_troubleshooting/client_spark_ui_troubleshooting_plan.md, and KT/spark_troubleshooting/spark_troubleshooting_cheat_sheet.md. Resume Step 12 Spark troubleshooting from the small Step 3 BRBF run on cluster j-3S62AU5IR98MM, application application_1779541486316_0003. We already inspected Job 22 and Stage 38. Continue the troubleshooting journey from the 5:00 P.M. EST 2026-05-23 checkpoint: memory pressure examples/benchmarks, the too-many-small-shuffle-partitions explanation, DAG Visualization optionality, Job/Stage/SQL/operator/code mapping, and the small-load Databricks/Photon conclusion. Finish the small-load troubleshooting pass first. After that, plan a medium-load run to look for more realistic skew, memory pressure, or both if practical. Keep updating the guide, client prompts, and cheat sheet so the final workflow supports quick copy/paste analysis in a client environment.
+Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md, KT/spark_troubleshooting/client_spark_ui_troubleshooting_plan.md, KT/spark_troubleshooting/client_spark_ui_troubleshooting_prompt_examples.md, and KT/spark_troubleshooting/spark_troubleshooting_cheat_sheet.md.
+
+Resume Step 12 from the MCBP medium controlled baseline checkpoint.
+
+Small-load source troubleshooting is complete:
+- small BRBF app: application_1779541486316_0003
+- small finding: Stage 38 / Job 22 / SQL Query 8 / count at BrbfJob.scala:80
+- conclusion: too many small shuffle partitions/task waves, not primary skew or memory pressure
+- Stage Operator And Code Mapping Prompt now includes the completion-gate conclusion
+
+Medium data and converted inputs are already prepared:
+- medium prefix: s3://aigithub-emr-2026/emr-migration-demo-medium/
+- MCBP #1-#4 complete: scale confirmed, S3 layout created, data generated, raw data validated
+- MCBP #5 complete: FeatureLogConverter, step s-05377242F3A87LPS5JUZ
+- MCBP #6 complete: EligibleUserDataLogConverter, step s-04508423OSLJSZBQW90K
+
+Medium Step 3 has failed twice on cluster j-3S62AU5IR98MM:
+- attempt 1: step s-0661117QH89RUU39ZQ1, app application_1779541486316_0010, Job 20 / Stage 37.0, root cause java.io.IOException: No space left on device
+- attempt 2: step s-09085642ZQTGXNML2TKJ, app application_1779541486316_0011, controlled change was EMR scale-out plus --executor-cores 2; live UI reached Job 20 / Stage 38 with about 11.8 GiB input over 200 tasks before failing
+
+Current decision:
+- stop tuning blindly on the current cluster
+- create a restore checkpoint before infrastructure changes
+- create a new EMR cluster with larger worker local/EBS disk from the start
+- rerun only medium Step 3 first, because medium Steps 1 and 2 already wrote converted data to S3
+
+Restore checkpoint:
+- local zip: /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
+- S3 zip: s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip
+- download with: aws s3 cp s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip /mnt/tmp/emr_migration_demo_2026-05-24_mcbp_medium_checkpoint.zip --region us-east-1
+
+Keep updating the resume plan, EMR troubleshooting guide, client Spark UI plan, prompt examples, and cheat sheet so the workflow remains copy/paste friendly for client Spark UI investigations.
 ```

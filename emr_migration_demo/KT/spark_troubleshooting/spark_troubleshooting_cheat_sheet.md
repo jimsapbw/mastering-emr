@@ -24,6 +24,7 @@ Prompt Outcome Examples: client_spark_ui_troubleshooting_prompt_examples.md
 | [7. Databricks Translation](#7-databricks-translation) | Mapping evidence to AQE, Photon, Delta, stats, layout, and UDF opportunities. |
 | [Quick Prompt Order](#quick-prompt-order) | Choosing which client troubleshooting prompt to run next. |
 | [Current Demo Checkpoint](#current-demo-checkpoint) | Recalling the current small-run Stage 38 conclusion. |
+| [Current Medium Checkpoint](#current-medium-checkpoint) | Recalling the MCBP medium disk-pressure state. |
 
 ## The Core Loop
 
@@ -405,4 +406,36 @@ Median task duration was about 4 s, so expected wave time was about 68 s.
 Observed stage duration was about 96 s.
 Stage 38 looked like too many small shuffle partitions for available parallelism.
 Likely Databricks angle: AQE partition coalescing.
+```
+
+## Current Medium Checkpoint
+
+As of MCBP medium Step 3:
+
+```text
+Medium data exists and is validated under:
+  s3://aigithub-emr-2026/emr-migration-demo-medium/
+
+Medium Steps 1 and 2 completed:
+  FeatureLogConverter
+  EligibleUserDataLogConverter
+
+Medium Step 3 attempt 1 failed:
+  step id: s-0661117QH89RUU39ZQ1
+  app id: application_1779541486316_0010
+  action: count at BrbfJob.scala:80
+  failed stage: Stage 37.0
+  root cause: No space left on device
+
+Medium Step 3 attempt 2 failed:
+  step id: s-09085642ZQTGXNML2TKJ
+  app id: application_1779541486316_0011
+  controlled change: cluster scale-out plus --executor-cores 2
+  observed before failure: Job 20 reached Stage 38 with about 11.8 GiB input over 200 tasks
+
+Current decision:
+  stop tuning blindly on this cluster
+  create a restore checkpoint
+  create a new cluster with larger worker local/EBS disk
+  rerun only medium Step 3 first
 ```

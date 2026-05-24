@@ -1357,6 +1357,24 @@ Please produce:
 
    Keep this section concise. Tie every Databricks/Photon point to evidence already listed above.
 
+12. Completion-gate conclusion
+   End with a clear decision for whether this dataset scale has been analyzed enough to move to the next scale.
+   Use this format:
+
+   ```text
+   Completion gate:
+     pass / not yet / blocked
+
+   Reason:
+     <one or two sentences tying together runtime config, bottleneck stage, skew check, memory check, partition check, operator/code mapping, and Databricks translation>
+
+   Still missing before scaling:
+     <only items that materially affect the conclusion; write none if complete>
+
+   Next recommended move:
+     <move to medium dataset / collect missing source evidence / run Databricks explain baseline / other>
+   ```
+
 Important:
 - Do not claim the physical plan alone gives exact Scala/Python line numbers unless the SQL/job detail explicitly shows them.
 - Distinguish the action line from the upstream transformation that created the expensive operator.
@@ -1993,4 +2011,3 @@ Return only:
 Databricks Genie prompt:
 <prompt>
 ```
-

@@ -468,6 +468,34 @@ Delta/statistics/layout:
   What it can improve: Better stats and layout can improve pruning, join planning, and shuffle behavior.
 ```
 
+#### 10. Completion-Gate Conclusion
+
+```text
+Completion gate:
+  pass
+
+Reason:
+  The small dataset source-side investigation has completed one clean loop:
+  runtime configuration was captured, Query 8 / Job 22 / Stage 38 was identified,
+  skew and memory pressure were ruled out as primary causes, partition/task-wave evidence
+  explains the slow stage, and the stage was mapped back to the joined DataFrame path
+  triggered by joined.count().
+
+  The Databricks translation is also documented:
+  AQE partition coalescing is the clearest opportunity for this small run,
+  AQE join strategy depends on table-size evidence,
+  Photon may help native operators,
+  and UDF projections should be reviewed later.
+
+Still missing before scaling:
+  none for the small-source troubleshooting loop.
+  Databricks explain and baseline runs are useful next, but they are part of the Databricks validation path,
+  not blockers for moving the EMR source investigation to medium scale.
+
+Next recommended move:
+  move to the medium dataset to look for more realistic skew, memory pressure, spill, and larger shuffle behavior.
+```
+
 ## Medium Dataset Examples
 
 Pending.
