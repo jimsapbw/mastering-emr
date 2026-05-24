@@ -624,7 +624,7 @@ union pressure
 Reference:
 
 ```text
-KT/emr_spark_troubleshooting_guide.md
+KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md
 ```
 
 ## Next Recommended Step

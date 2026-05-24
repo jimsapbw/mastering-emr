@@ -9,7 +9,7 @@ The goal is not only to make the jobs work. The goal is to create a credible bas
 For the troubleshooting workflow and Spark UI evidence to capture, see:
 
 ```text
-emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
+emr_migration_demo/KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md
 ```
 
 For future migration improvement stories that are not part of the first EMR baseline, see:

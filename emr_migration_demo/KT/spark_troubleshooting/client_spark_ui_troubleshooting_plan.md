@@ -6,6 +6,12 @@ Use this plan when starting a migration or performance assessment in a client en
 
 The goal is to collect enough Spark runtime evidence to understand the current workload before proposing Databricks, Photon, Delta, or code-level optimizations.
 
+Worked prompt-output examples live in:
+
+```text
+KT/spark_troubleshooting/client_spark_ui_troubleshooting_prompt_examples.md
+```
+
 ## Preferred Access
 
 Ask for access to the current platform's Spark observability surfaces:
@@ -68,6 +74,14 @@ s3://
 main_class
 steps
 ```
+
+For Scala jobs, the most important entry-point clue is usually:
+
+```text
+--class com.company.SomeSparkJob
+```
+
+That class name tells you which Scala object or class to look for in the GitLab repo.
 
 Classify the launch pattern:
 
@@ -467,23 +481,121 @@ Use careful language when comparing runtimes:
 The first Databricks run is a migration baseline, not a final optimized target. Runtime differences may reflect cluster shape, Spark defaults, I/O behavior, and platform differences.
 ```
 
-## Investigation Prompt
+## Airflow DAG Entry-Point Prompt
 
-Use this prompt when reviewing the Airflow DAG repo:
+Use this prompt first when reviewing the Airflow DAG repo and GitLab project.
+
+The goal is to identify exactly how one Airflow task becomes one Spark application before doing Spark UI performance analysis.
 
 ```text
 I am investigating an Airflow-managed Spark/EMR workload for migration and performance analysis.
 
-Please inspect this DAG repository and identify the first complete execution path from Airflow to Spark:
+Please inspect this DAG repository and identify the first complete execution path from Airflow to Spark.
 
-1. Find the DAG and task that launches the workload.
-2. Identify the operator type and whether it uses EMR steps, transient EMR cluster creation, EMR Serverless, EMR on EKS, direct spark-submit, or Databricks.
-3. Extract the cluster or application target, including cluster id/name lookup, AWS region, Airflow connection, IAM role, and whether the cluster is long-running or created per run.
-4. Extract the Spark workload details: main class or script, JAR or Python path, deploy mode, Spark configs, input paths, output paths, runtime arguments, retries, and timeout settings.
-5. Show how to map one Airflow task run to the Spark observability chain:
+Context I can provide:
+- Airflow DAG file or repo path:
+- DAG id, if known:
+- Task id, if known:
+- Airflow run id / execution date, if known:
+- Environment/account/region, if known:
+- Any task log snippet, if available:
+
+Search hints:
+- Airflow operators:
+  - EmrAddStepsOperator
+  - EmrCreateJobFlowOperator
+  - EmrServerlessStartJobOperator
+  - EmrContainerOperator
+  - SparkSubmitOperator
+  - BashOperator
+  - PythonOperator
+  - DatabricksSubmitRunOperator
+- EMR/Spark keywords:
+  - job_flow_id
+  - cluster_id
+  - cluster_name
+  - emr
+  - add_steps
+  - step_id
+  - command-runner.jar
+  - spark-submit
+  - --class
+  - --deploy-mode
+  - main_class
+  - application_id
+  - virtual_cluster_id
+  - release_label
+  - s3://
+- Config and lookup hints:
+  - Airflow Variable.get
+  - Airflow connection id
+  - AWS region
+  - IAM role / instance profile
+  - environment-specific cluster mapping
+  - retries
+  - execution_timeout
+  - SLA / timeout
+
+Tasks:
+
+1. Find the DAG and task that launches the Spark workload.
+2. Identify the launch pattern:
+   - existing long-running EMR cluster
+   - transient EMR cluster
+   - EMR Serverless
+   - EMR on EKS
+   - direct spark-submit
+   - Databricks job/submit run
+   - unknown / needs follow-up
+3. Extract the Airflow task details:
+   - DAG id
+   - task id
+   - operator type
+   - upstream/downstream validation or audit tasks
+   - retries
+   - timeout/SLA
+4. Extract the cluster/application target:
+   - AWS account/environment, if visible
+   - AWS region
+   - EMR cluster id/name or lookup variable
+   - EMR Serverless application id, if used
+   - EMR on EKS virtual cluster id, if used
+   - Airflow connection id
+   - IAM role / execution role / instance profile
+   - whether the target is long-running or created per DAG run
+5. Extract the Spark workload details:
+   - main class, Python file, notebook, or SQL entry point
+   - JAR, wheel, Python file, or artifact path
+   - deploy mode
+   - Spark configs and packages
+   - input paths or table arguments
+   - output paths or table arguments
+   - run-date, partition, hour, or business-date arguments
+   - output mode / overwrite behavior
+6. Show how to map one Airflow task run to the Spark observability chain:
    Airflow task instance -> EMR step id or Spark submission -> YARN application id -> Spark History Server application -> jobs/stages/SQL operators.
-6. List any missing access or metadata needed to complete the trace.
-7. Do not optimize yet. Only document the current-state execution path and evidence to collect.
+7. Identify where to find row-count or audit evidence later:
+   - same Spark task logs
+   - separate validation task
+   - data quality task
+   - audit/reconciliation table update
+   - source/target count task
+8. List missing access or metadata needed to complete the trace.
+9. Do not optimize yet. Only document the current-state execution path and evidence to collect.
+
+Return:
+
+Execution path:
+Airflow DAG/task -> launch operator -> Spark/EMR target -> Spark entry point -> Spark History lookup path
+
+Task inventory:
+DAG id | Task id | Operator | Launch pattern | Cluster/app target | Spark entry point | Key args | Logs/count hints | Missing follow-up
+
+Search terms used:
+<list the most useful files/keywords to inspect next>
+
+Follow-up questions:
+<only questions needed to complete the trace>
 ```
 
 ## Runtime Configuration Prompt
@@ -882,6 +994,8 @@ Context:
 - Stage description:
 - Total stage duration:
 - Number of tasks:
+- Active executor count:
+- Total active executor cores / approximate task slots:
 - Runtime settings, if known:
   - spark.sql.adaptive.enabled =
   - spark.sql.adaptive.skewJoin.enabled =
@@ -927,6 +1041,10 @@ Please produce:
    - memory spill
    - disk spill
    - GC time
+   - approximate task slots
+   - estimated task waves = number of tasks / approximate task slots
+   - estimated wave time = estimated task waves * median task duration
+   - observed stage duration vs estimated wave time
    - executor task distribution
    - executor shuffle distribution
 
@@ -957,6 +1075,11 @@ Please produce:
    - appropriate partitioning
    - cannot tell yet
    Consider number of tasks, shuffle read per task, stage duration, and available executor task slots.
+   Use task-wave math:
+   - task waves = number of tasks / approximate task slots
+   - expected wave time = task waves * median task duration
+   Compare expected wave time with observed stage duration.
+   Explain whether the stage runtime is mostly explained by many waves of tiny tasks, by a few heavy tasks, or by another bottleneck.
 
 6. Memory pressure decision
    Decide whether this stage shows memory pressure.
@@ -1009,6 +1132,146 @@ Important:
 - Do not call a stage skewed just because it is long-running.
 - Do not call a stage over-partitioned unless per-task data is small and task-wave/scheduler overhead is plausible.
 - Do not claim Databricks will improve it without explaining which feature maps to the evidence.
+```
+
+## Physical Plan To Code Mapping Prompt
+
+Use this prompt after you have:
+
+```text
+Airflow DAG entry point
+Spark application
+expensive SQL query
+associated job ids
+expensive stage metrics
+physical plan for the selected SQL query
+```
+
+The goal is to turn Spark UI evidence into GitLab search clues and likely source-code locations.
+
+```text
+I am mapping an expensive Spark SQL query and stage back to source code in a client GitLab repository.
+
+Please use the SQL query details, stage metrics, and physical plan to produce code-search clues and a likely source-code mapping.
+
+Context:
+- Airflow DAG id:
+- Airflow task id:
+- Spark launch pattern:
+- Spark main class / script / notebook entry point:
+- Spark application name:
+- Spark application id:
+- SQL query id/name:
+- SQL query details action line, if shown:
+  - examples: count at SomeJob.scala:80, parquet at Writer.scala:59, saveAsTable at Job.scala:120
+- Associated job ids:
+- Expensive job id:
+- Expensive stage id:
+- Bottleneck classification:
+  - skew / memory pressure / too many small partitions / too few heavy partitions / executor imbalance / expensive join / expensive aggregate / expensive write / unknown
+
+Stage metrics:
+<paste expensive stage Summary Metrics and Aggregated Metrics by Executor here>
+
+Physical plan:
+<paste relevant physical plan here>
+
+Known GitLab context:
+- Repo path:
+- Main class or script path, if known:
+- Important package/module names, if known:
+- Known input tables or paths:
+- Known output tables or paths:
+
+Please produce:
+
+1. Action-line mapping
+   Identify the action that triggered this query if visible:
+   - count
+   - write/parquet/save/saveAsTable
+   - collect/show/take
+   - foreachBatch
+   Explain that this action line triggers execution but may not be the transformation that caused the expensive stage.
+
+2. Operator fingerprints
+   Extract code-search fingerprints from the physical plan:
+   - FileScan paths or table names
+   - selected columns
+   - join keys
+   - join types
+   - BroadcastHashJoin / ShuffledHashJoin / SortMergeJoin
+   - Exchange hashpartitioning / rangepartitioning / SinglePartition
+   - aggregate functions and group keys
+   - sort keys
+   - UDF / ScalaUDF / PythonUDF expressions
+   - write operators
+
+3. GitLab search terms
+   Provide targeted search terms grouped by purpose:
+   - entry point search
+   - source dataset/table/path search
+   - join-key search
+   - operator search such as join, broadcast, repartition, groupBy, agg, countDistinct, dropDuplicates, sort, orderBy, write
+   - UDF search
+   - output/write search
+
+4. Likely code areas
+   Create a mapping table:
+
+   Spark evidence                    Code clue/search term              Likely source area              Confidence
+   <Exchange/join/FileScan/UDF>       <term>                             <file/class/block if known>     high/medium/low
+
+5. Stage-to-operator hypothesis
+   For the expensive stage, identify the most likely physical operator or operator boundary:
+   - scan stage
+   - shuffle write stage
+   - shuffle read/join stage
+   - aggregate stage
+   - sort/write stage
+   - final single-partition count/collect stage
+   Explain what evidence supports the mapping and what remains uncertain.
+
+6. What to verify in code
+   Once the source file is opened, tell me exactly what to check:
+   - whether there is a manual repartition/coalesce
+   - whether broadcast is explicit or optimizer-chosen
+   - whether join keys match the physical plan
+   - whether dropDuplicates/distinct/countDistinct creates an Exchange
+   - whether UDFs appear before joins or filters
+   - whether write partitioning/sort/orderBy is intentional
+   - whether repeated count/show/write actions trigger repeated jobs
+
+7. Databricks / Photon opportunity signals
+   While this prompt should not recommend code changes yet, tag each mapped code area with possible follow-up categories:
+   - AQE partition coalescing:
+     fixed shuffle partitions, many small shuffle tasks, unnecessary manual repartition
+   - AQE skew handling:
+     skewed shuffle partitions, hot join/group keys, salting logic
+   - AQE join strategy / broadcast:
+     small join side using shuffle join, missing stats, explicit broadcast risk
+   - Photon-friendly operators:
+     FileScan, Filter, native Project, BroadcastHashJoin, SortMergeJoin, HashAggregate, Sort, WriteFiles
+   - Less Photon-friendly code:
+     Scala UDF, Python UDF, opaque row-by-row transformations, complex custom encoders
+   - Delta/statistics/layout:
+     large scans, weak pruning, many small files, table stats missing, repeated full-partition reads
+   - Write/layout tuning:
+     Sort, repartition, coalesce, partitionBy, file sizing, output commit behavior
+
+   Return this table:
+
+   Code area / operator        Current evidence        Databricks/Photon follow-up category        Confirmed or inferred
+   ?                           ?                       ?                                           confirmed/inferred
+
+8. Current-state conclusion
+   Write a conservative conclusion using this format:
+   The expensive stage belongs to <SQL query/action>. The physical plan points to <operator/fingerprint>. Search GitLab for <terms> in <entry point/module>. This likely maps to <transformation block>, but exact line-level mapping requires source-code confirmation.
+
+Important:
+- Do not claim the physical plan alone gives exact Scala/Python line numbers unless the SQL/job detail explicitly shows them.
+- Distinguish the action line from the upstream transformation that created the expensive operator.
+- Label every code mapping as confirmed or inferred.
+- Do not recommend code changes yet; this prompt is for mapping evidence to likely code locations and tagging possible optimization categories for later validation.
 ```
 
 ## Skew Follow-Up Prompt
@@ -1182,6 +1445,7 @@ Context:
 - Number of tasks:
 - Executor count:
 - Executor cores:
+- Total active executor cores:
 - Approximate concurrent task slots:
 - Runtime settings:
   - spark.sql.adaptive.enabled =
@@ -1207,7 +1471,13 @@ Please produce:
 2. Task-wave estimate
    Estimate task waves:
    total tasks / approximate concurrent task slots.
-   Compare estimated waves * median task duration to observed stage duration.
+   Estimate expected wave time:
+   estimated waves * median task duration.
+   Compare expected wave time to observed stage duration.
+   Classify the result:
+   - if expected wave time explains most of the observed duration and tasks are tiny/healthy, this supports too many small partitions
+   - if there are few waves but tasks are large, long, and spilling, this supports too few/heavy partitions
+   - if waves, per-task bytes, GC, spill, and executor balance all look reasonable, partitioning may be balanced and another operator cost may dominate
 
 3. Likely Exchange/operator
    Identify which Exchange, repartition, aggregation, join, sort, or count action created the small partitions.

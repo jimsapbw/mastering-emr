@@ -164,6 +164,17 @@ Branch: main
 Commit: a81e5c1 Add Spark troubleshooting cheat sheet and follow-up prompts
 ```
 
+Pending restore checkpoint after May 24 troubleshooting-docs reorganization:
+
+```text
+Organized Spark troubleshooting docs under KT/spark_troubleshooting/
+Added client Spark UI prompt outcome examples
+Added Airflow DAG Entry-Point Prompt
+Added Physical Plan To Code Mapping Prompt
+Updated cheat sheet prompt sequence
+Updated KT links to the new troubleshooting folder
+```
+
 This latest commit includes:
 
 ```text
@@ -447,6 +458,14 @@ Latest Step 12 troubleshooting playbook zip backup:
 
 ```text
 s3://aigithub-emr-2026/emr-migration-demo/artifacts/code-backup/emr_migration_demo_2026-05-23_spark_troubleshooting_playbook_a81e5c1.zip
+```
+
+Pending May 24 restore checkpoint backup:
+
+```text
+GitHub commit: pending
+S3 zip backup: pending
+S3 explorable folder backup: pending
 ```
 
 Latest explorable S3 folder backup:
@@ -745,7 +764,7 @@ Reference:
 
 ```text
 emr_migration_demo/KT/12_scale_data_and_tune_runtime.md
-emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
+emr_migration_demo/KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md
 ```
 
 ## Resume Prompt
@@ -753,5 +772,5 @@ emr_migration_demo/KT/emr_spark_troubleshooting_guide.md
 Use this prompt in a future Codex session:
 
 ```text
-Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/emr_spark_troubleshooting_guide.md, KT/client_spark_ui_troubleshooting_plan.md, and KT/spark_troubleshooting_cheat_sheet.md. Resume Step 12 Spark troubleshooting from the small Step 3 BRBF run on cluster j-3S62AU5IR98MM, application application_1779541486316_0003. We already inspected Job 22 and Stage 38. Continue the troubleshooting journey from the 5:00 P.M. EST 2026-05-23 checkpoint: memory pressure examples/benchmarks, the too-many-small-shuffle-partitions explanation, DAG Visualization optionality, Job/Stage/SQL/operator/code mapping, and the small-load Databricks/Photon conclusion. Finish the small-load troubleshooting pass first. After that, plan a medium-load run to look for more realistic skew, memory pressure, or both if practical. Keep updating the guide, client prompts, and cheat sheet so the final workflow supports quick copy/paste analysis in a client environment.
+Read emr_migration_demo/KT/00_resume_plan.md, KT/12_scale_data_and_tune_runtime.md, KT/spark_troubleshooting/emr_spark_troubleshooting_guide.md, KT/spark_troubleshooting/client_spark_ui_troubleshooting_plan.md, and KT/spark_troubleshooting/spark_troubleshooting_cheat_sheet.md. Resume Step 12 Spark troubleshooting from the small Step 3 BRBF run on cluster j-3S62AU5IR98MM, application application_1779541486316_0003. We already inspected Job 22 and Stage 38. Continue the troubleshooting journey from the 5:00 P.M. EST 2026-05-23 checkpoint: memory pressure examples/benchmarks, the too-many-small-shuffle-partitions explanation, DAG Visualization optionality, Job/Stage/SQL/operator/code mapping, and the small-load Databricks/Photon conclusion. Finish the small-load troubleshooting pass first. After that, plan a medium-load run to look for more realistic skew, memory pressure, or both if practical. Keep updating the guide, client prompts, and cheat sheet so the final workflow supports quick copy/paste analysis in a client environment.
 ```

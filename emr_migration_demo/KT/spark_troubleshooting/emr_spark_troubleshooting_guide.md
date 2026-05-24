@@ -849,6 +849,233 @@ executor sizing changes
 reducing unnecessary cache/persist pressure
 ```
 
+### 4.3 Diagnose Partition Sizing And Task Waves
+
+Partition sizing problems often appear after skew and memory pressure have been ruled out.
+
+The question is:
+
+```text
+Is this stage slow because each task is too heavy, or because Spark has too many small tasks to march through?
+```
+
+First partition-sizing check:
+
+```text
+1. Get task count from the Stage page.
+2. Get total active cores from the Executors tab.
+3. Treat total active cores as approximate concurrent task slots.
+4. Estimate task waves:
+     task waves = number of tasks / approximate task slots
+5. Estimate stage time from waves:
+     expected stage time = task waves * median task duration
+6. Compare expected stage time to observed stage duration.
+```
+
+Spark normally runs about one task per executor core. In Spark History Server:
+
+```text
+Executors tab -> Summary -> Active or Total -> Cores
+```
+
+Use active executor cores for the application as the practical task-slot estimate.
+
+Actual demo example from Step 12, Job 22, Stage 38:
+
+```text
+stage duration:             1.6 min, about 96 s
+number of tasks:            200
+active executor cores:      12
+approximate task slots:     12
+estimated task waves:       200 / 12 = 16.7, about 17 waves
+median task duration:       4 s
+expected wave time:         17 * 4 s = 68 s, about 1.1 min
+median shuffle read:        2 MiB
+max shuffle read:           3.1 MiB
+total shuffle read:         398.4 MiB
+max GC time:                0.6 s
+memory spill:               not shown in summary
+disk spill:                 not shown in summary
+shuffle fetch wait:         low
+scheduler delay:            low
+executor balance:           balanced
+```
+
+Interpretation:
+
+```text
+Likely too many small shuffle partitions for this cluster and data size.
+
+The median-task wave estimate explains much of the observed stage duration.
+The remaining time can come from slower waves, task startup overhead, final stragglers,
+write/commit overhead, and normal Spark scheduling overhead.
+
+This is not obvious skew because max shuffle read is close to median.
+This is not obvious memory pressure because GC and spill are low.
+This is not a clear fetch or scheduler-delay issue because those metrics are low.
+```
+
+Hypothetical too-many-small-partitions example:
+
+```text
+task slots:             12
+shuffle partitions:     2,000
+task waves:             167
+median shuffle read:    4 MiB
+max shuffle read:       8 MiB
+median task duration:   2 s
+max task duration:      12 s
+spill:                  none
+GC:                     low
+executor balance:       even
+observed stage time:    several minutes
+```
+
+Interpretation:
+
+```text
+Likely over-partitioned.
+Tasks are small and healthy, but there are so many waves that stage wall-clock time is high.
+Reduce shuffle partitions for this scale, remove unnecessary repartitions, or rely on AQE partition coalescing where available.
+```
+
+Hypothetical too-few-heavy-partitions example:
+
+```text
+task slots:             12
+shuffle partitions:     12
+task waves:             1
+median shuffle read:    3 GiB
+max shuffle read:       6 GiB
+median task duration:   12 min
+max task duration:      25 min
+memory spill:           high
+disk spill:             high
+GC:                     elevated
+executor balance:       roughly even
+```
+
+Interpretation:
+
+```text
+Likely under-partitioned or using heavy partitions.
+The stage does not have many waves, but each task carries too much data.
+Increase partitions, reduce row width earlier, check join/aggregate size, and inspect memory pressure.
+```
+
+Hypothetical balanced-partitions example:
+
+```text
+task slots:             12
+shuffle partitions:     96
+task waves:             8
+median shuffle read:    128 MiB
+max shuffle read:       220 MiB
+median task duration:   35 s
+max task duration:      75 s
+spill:                  little or none
+GC:                     low
+executor balance:       even
+observed stage time:    close to wave estimate
+```
+
+Interpretation:
+
+```text
+Likely reasonable partition sizing.
+Tasks are large enough to amortize scheduling overhead but not so large that they spill heavily.
+If the stage is still slow, investigate operator cost, join strategy, sort/write cost, storage reads, or repeated actions.
+```
+
+Practical partition-sizing benchmarks:
+
+```text
+Healthy or acceptable:
+  median shuffle read is often tens to hundreds of MiB for large shuffle stages
+  max shuffle read is less than about 2x-3x median
+  GC is less than about 5%-10% of task runtime
+  little or no spill
+  stage duration is reasonably explained by task waves and task duration
+
+Watch closely:
+  median shuffle read is low MiB-scale with many waves
+  or median shuffle read is hundreds of MiB to low GiB with some spill
+  max is about 3x-5x median
+  stage time starts tracking either wave count or spill-heavy tasks
+
+Likely too many small partitions:
+  median shuffle read is KiB to low-MiB scale, often below about 16-32 MiB
+  task count is high relative to executor cores
+  estimated task waves are high
+  median task duration is short
+  GC, spill, scheduler delay, and fetch wait are low
+  executors are balanced
+  observed stage duration is largely explained by many waves of small tasks
+
+Likely too few heavy partitions:
+  median task reads hundreds of MiB to GiB-scale data
+  task durations are long
+  GC and spill are meaningful
+  peak execution memory is high
+  stage duration tracks heavy task runtime rather than wave count
+```
+
+For large client workloads with hundreds of GB or TBs:
+
+```text
+Do not use one universal target partition size.
+Judge partition sizing by task waves, per-task bytes, duration, GC, spill, and skew together.
+
+Example not necessarily over-partitioned at large scale:
+  tasks:                4,000
+  task slots:           500
+  task waves:           8
+  median shuffle read:  128 MiB
+  max shuffle read:     250 MiB
+  GC/spill:             low
+  stage time:           close to wave estimate
+
+Example likely over-partitioned at large scale:
+  tasks:                40,000
+  task slots:           500
+  task waves:           80
+  median shuffle read:  2 MiB
+  max shuffle read:     5 MiB
+  GC/spill:             low
+  stage time:           dominated by many short task waves
+
+Example likely under-partitioned at large scale:
+  tasks:                500
+  task slots:           500
+  task waves:           1
+  median shuffle read:  8 GiB
+  max shuffle read:     20 GiB
+  GC/spill:             high
+  stage time:           dominated by heavy spill-prone tasks
+```
+
+Use the wave estimate as a reasoning tool, not a precise SLA.
+If observed stage duration is close to:
+
+```text
+task waves * median task duration
+```
+
+and task data is tiny with low GC/spill, partition count is a strong suspect.
+
+If observed duration is much higher than the wave estimate, inspect:
+
+```text
+max task duration
+GC time
+memory spill and disk spill
+shuffle fetch wait
+scheduler delay
+executor imbalance
+write commit time
+operator cost
+```
+
 ### 5. Identify Operators
 
 Go to:

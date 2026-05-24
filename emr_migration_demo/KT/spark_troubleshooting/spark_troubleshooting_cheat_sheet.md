@@ -7,6 +7,7 @@ Detailed references:
 ```text
 EMR Spark Troubleshooting Guide: emr_spark_troubleshooting_guide.md
 Client Spark UI Troubleshooting Plan: client_spark_ui_troubleshooting_plan.md
+Prompt Outcome Examples: client_spark_ui_troubleshooting_prompt_examples.md
 ```
 
 ## The Core Loop
@@ -112,6 +113,8 @@ Capture for top stages:
 ```text
 duration
 tasks
+active executor cores / approximate task slots
+estimated task waves
 shuffle read/write
 input/output
 GC time
@@ -163,49 +166,6 @@ max 3x-5x median -> watch closely
 max > 5x-10x median -> likely skew
 ```
 
-### Too Many Small Partitions
-
-```text
-many tasks
-small shuffle read per task
-balanced executors
-low spill
-stage slow because tasks run in many waves
-```
-
-Example:
-
-```text
-200 tasks
-median shuffle read 2 MiB
-balanced 100/100 tasks across executors
-AQE disabled
-```
-
-Likely Databricks angle:
-
-```text
-AQE partition coalescing
-```
-
-### Too Few Heavy Partitions
-
-```text
-few tasks
-large shuffle read per task
-long task duration
-spill or high GC
-```
-
-Likely angles:
-
-```text
-increase partitions
-AQE skew handling
-better layout
-executor sizing
-```
-
 ### Memory Pressure
 
 ```text
@@ -234,6 +194,87 @@ increase executor memory
 AQE/skew handling
 Photon for supported operators
 ```
+
+### Too Many Small Partitions
+
+```text
+many tasks
+small shuffle read per task
+many task waves relative to available task slots
+expected wave time explains much of stage duration
+balanced executors
+low spill
+stage slow because tasks run in many waves
+```
+
+Mental model:
+
+```text
+Spark usually runs about 1 task per executor core.
+active executor cores ~= concurrent task slots
+task waves = stage tasks / concurrent task slots
+expected wave time = task waves * median task duration
+```
+
+Example:
+
+```text
+200 tasks
+12 active executor cores / task slots
+200 / 12 = about 17 task waves
+median shuffle read 2 MiB
+max shuffle read 3.1 MiB
+median task duration 4 s
+expected wave time about 17 * 4 s = 68 s
+observed stage duration about 96 s
+balanced executors
+AQE disabled
+```
+
+Interpretation:
+
+```text
+If tasks are tiny and healthy, and observed stage time is close to task waves * median task duration,
+partition count is a strong suspect.
+```
+
+Likely Databricks angle:
+
+```text
+AQE partition coalescing
+```
+
+### Too Few Heavy Partitions
+
+```text
+few tasks
+few task waves
+large shuffle read per task
+long task duration
+spill or high GC
+```
+
+Likely angles:
+
+```text
+increase partitions
+AQE skew handling
+better layout
+executor sizing
+```
+
+### Balanced Partitions
+
+```text
+task waves are reasonable for available slots
+median shuffle read is large enough to avoid tiny-task overhead
+max is less than about 2x-3x median
+GC and spill are low
+executors are balanced
+stage duration is close to wave estimate
+```
+
+For large workloads, healthy shuffle tasks are often tens to hundreds of MiB, but do not use one universal target. Judge by waves, bytes, duration, GC, spill, and skew together.
 
 ### Expensive Shuffle/Join
 
@@ -317,13 +358,18 @@ Databricks baseline is not the same as source-platform baseline.
 Use prompts from `client_spark_ui_troubleshooting_plan.md` in this order:
 
 ```text
-1. Investigation Prompt
+1. Airflow DAG Entry-Point Prompt
 2. Runtime Configuration Prompt
 3. Airflow Count Discovery Prompt
 4. Physical Plan Bottleneck Prompt
 5. Spark Stage Size Prompt
 6. Bottleneck Stage Metrics Prompt
-7. Databricks Count Baseline Prompt
+7. Physical Plan To Code Mapping Prompt
+8. Use the matching follow-up prompt:
+     Skew Follow-Up Prompt
+     Memory Pressure Follow-Up Prompt
+     Small Shuffle Partitions Follow-Up Prompt
+9. Databricks Count Baseline Prompt, if source-side counts or join sizes are missing
 ```
 
 ## Current Demo Checkpoint
@@ -333,6 +379,9 @@ As of the Step 12 small run:
 ```text
 Stage 38 was not skewed.
 Stage 38 was not executor-imbalanced.
+Stage 38 used 200 tasks over 12 task slots, or about 17 task waves.
+Median task duration was about 4 s, so expected wave time was about 68 s.
+Observed stage duration was about 96 s.
 Stage 38 looked like too many small shuffle partitions for available parallelism.
 Likely Databricks angle: AQE partition coalescing.
 ```
