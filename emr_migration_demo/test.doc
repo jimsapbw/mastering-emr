@@ -1,0 +1,117 @@
+Kick off with JAR file
+-	Yes, for this migration I would start by running it as a JAR task in Databricks.
+-	
+-	Reason: your Airflow DAG already runs each task as a compiled Scala main class from the AudAuto assembly jar:
+-	
+-	eldorado-audauto-assembly.jar
+-	For Task 1, the main class is:
+-	
+-	model.fpcookiescoring.GenerateCampaignScores
+-	So the closest Databricks baseline is:
+-	
+-	Databricks Job Task Type: JAR
+-	Main class: model.fpcookiescoring.GenerateCampaignScores
+-	Jar: eldorado-audauto-assembly.jar
+-	That keeps the migration clean because you are only changing the compute platform first:
+-	
+-	Airflow + EMR + same jar
+-	        to
+-	Databricks workflow + Databricks cluster + same jar
+-	You are not changing business logic yet.
+-	
+-	I would avoid starting with notebooks unless your goal is to refactor. Notebooks are useful later for debugging, sampling, and validation, but the first baseline should be JAR-based so you can compare EMR vs Databricks outputs fairly.
+-	
+-	Recommended sequence:
+-	
+-	1. Run existing JAR on Databricks.
+-	2. Pass the same config values from the DAG.
+-	3. Write outputs to sandbox paths first.
+-	4. Compare output schemas/counts/samples with EMR.
+-	5. Only then decide whether to refactor into notebooks or keep as JAR jobs.
+-	For Task 1 specifically:
+-	
+-	JAR task
+-	Main class: model.fpcookiescoring.GenerateCampaignScores
+-	Configs:
+-	  date=YYYY-MM-DD
+-	  useNewSources=true
+-	  trainingWindowDays=14
+-	  labelWindowDays=1
+-	  testWindowDays=2
+-	  openlineage.enable=false
+-	  generateDebugTables=false
+-	So short answer: yes, start with JAR files. That is the lowest-risk migration path.
+EMR Cluster configuration
+Yes. This DAG uses a different EMR cluster per task, and each task has different Spark/job config.
+All four clusters are created with the same helper:
+emr_cluster_factory.py (line 136)
+python
+create_emr_cluster_r7g(...)
+That means all four are EMR Spark 3.5 r7g clusters:
+text
+EMR release: AWS_EMR_SPARK_3_5 Master: r7g.4xlarge, 300 GB EBS Core fleet choices: r7g.8xlarge r7g.16xlarge Logs: s3://thetradedesk-mlplatform-us-east-1/logs/emr/audauto Extra app: Hadoop Prometheus monitoring: enabled
+Shared EMR app config:
+utils.py (line 149)
+text
+emrfs-site: fs.s3.maxConnections = 1000 fs.s3.maxRetries = 60 fs.s3.sleepTimeSeconds = 15 spark-hive-site: hive.metastore.client.factory.class = com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory
+Shared per-job configs:
+perf-automation-fpcs.py (line 20)
+text
+spark.sql.objectHashAggregate.sortBased.fallbackThreshold = 4096 date = logical_date + 1 day spark.executor.extraJavaOptions = -server -XX:+UseParallelGC jar = s3://ttd-build-artefacts/eldorado/release-spark-3/main-spark-3/latest/eldorado-audauto-assembly.jar
+Task 1: GenerateCampaignScores
+Cluster:
+perf-automation-fpcs.py (line 39)
+text
+Cluster name: FirstPartyGenerateCampaignScores Capacity: 135 Core EBS per x: 64
+Core storage options from factory:
+text
+r7g.8xlarge -> 512 GB EBS r7g.16xlarge -> 1024 GB EBS
+Spark config:
+text
+spark.executor.memory = 180g spark.driver.memory = 180g spark.driver.cores = 30 spark.driver.maxResultSize = 0 spark.driver.memoryOverhead = 56g spark.executor.cores = 30 spark.executor.memoryOverhead = 56g spark.sql.shuffle.partitions = 12000 spark.dynamicAllocation.enabled = true spark.network.timeout = 14400s spark.executor.heartbeatInterval = 600s
+Eldorado config:
+text
+useNewSources = true trainingWindowDays = 14 labelWindowDays = 1 testWindowDays = 2 openlineage.enable = false
+Task 2: FirstPartyCookieScoringModel
+Cluster:
+text
+Cluster name: FirstPartyCookieScoringModel Capacity: 270 Core EBS per x: 48
+Core storage:
+text
+r7g.8xlarge -> 384 GB EBS r7g.16xlarge -> 768 GB EBS
+Spark config:
+text
+spark.executor.memory = 180g spark.driver.memory = 180g spark.driver.cores = 30 spark.driver.maxResultSize = 0 spark.driver.memoryOverhead = 56g spark.executor.cores = 30 spark.executor.memoryOverhead = 56g spark.sql.shuffle.partitions = 6000 spark.dynamicAllocation.enabled = true
+Eldorado config:
+text
+useNewSources = true trainingWindowDays = 14 labelWindowDays = 1 testWindowDays = 2 openlineage.enable = false
+Task 3: CookieScoringToAdvertiserData
+Cluster:
+text
+Cluster name: FirstPartyCookieScoringToAdvertiserData Capacity: 20 Core EBS per x: 66
+Core storage:
+text
+r7g.8xlarge -> 528 GB EBS r7g.16xlarge -> 1056 GB EBS
+Spark config:
+text
+spark.driver.memory = 40g spark.executor.extraJavaOptions = -server -XX:+UseParallelGC
+Eldorado config:
+text
+usersPerFile = 20000 openlineage.enable = false
+Plus shared:
+text
+date = logical_date + 1 day spark.sql.objectHashAggregate.sortBased.fallbackThreshold = 4096
+Task 4: FpcsPerformance
+Cluster:
+text
+Cluster name: FirstPartyCookieScoringPerfCalculation Capacity: 120 Core EBS per x: 64
+Core storage:
+text
+r7g.8xlarge -> 512 GB EBS r7g.16xlarge -> 1024 GB EBS
+Spark config:
+text
+spark.executor.memory = 100g spark.driver.memory = 100g spark.driver.cores = 15 spark.driver.maxResultSize = 0 spark.driver.memoryOverhead = 18g spark.executor.cores = 15 spark.executor.memoryOverhead = 18g spark.sql.shuffle.partitions = 18000 spark.dynamicAllocation.enabled = true
+Eldorado config:
+text
+LookbackWindowDays = 3 openlineage.enable = false
+So yes: same cluster family/helper, but separate cluster per task, with different capacity/storage and different Spark config per task.
