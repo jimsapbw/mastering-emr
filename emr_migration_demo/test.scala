@@ -1,73 +1,22 @@
-package model.fpcookiescoring
+package model
 
-import com.thetradedesk.spark.datasets.core.SchemaPolicy.MergeAllFilesSchema
-import com.thetradedesk.spark.datasets.core._
+import java.time.LocalDate
+import com.thetradedesk.spark.TTDSparkContext.spark.implicits._
+import com.thetradedesk.spark.datasets.sources.datalake.{ConversionTrackerVerticaLoadDataSetV4, EventTrackerVerticaLoadDataSetV4}
+import com.thetradedesk.spark.util.TTDConfig.defaultCloudProvider
 
-case class CampaignScoreRecord(
-    advertiserid: String,
-    CampaignId: String,
-    tdid: String,
-    dcs: Seq[Int],
-    relevantscore_CPA: Double,
-    relevantscore_ROAS: Double
-)
+package object fpcookiescoring {
+  def loadConversionTrackerData(rangeStart: LocalDate, rangeEnd: LocalDate) = {
+    ConversionTrackerVerticaLoadDataSetV4(defaultCloudProvider)
+      // todo: adjust end date to include current hour if we decide to run the job more often
+      .readRange(rangeStart.atStartOfDay(), rangeEnd.atStartOfDay())
+      .filter('tdid =!= "00000000-0000-0000-0000-000000000000")
+  }
 
-case class CampaignScoreDataSet() extends SimpleS3DataSet[CampaignScoreRecord](
-  dataSetType = GeneratedDataSet,
-  rootPath = S3Roots.IDENTITY_ROOT,
-  rootFolderPath = "models/firstpartycookiescoring/temp/campaignscores")
-
-case class AdGroupSelectedUsersRecord(
-    AdvertiserId: String,
-    AdGroupId: String,
-    TrackingTagId: String,
-    TDID: String
-)
-
-case class AdGroupSelectedUsersDataSet() extends SimpleS3DataSet[AdGroupSelectedUsersRecord](
-  dataSetType = GeneratedDataSet,
-  rootPath = S3Roots.IDENTITY_ROOT,
-  rootFolderPath = "models/firstpartycookiescoring/temp/adgroupselectedusers")
-
-case class TargetedBidRecord(
-    TargetingDataName: String,
-    TargetingDataId: Long,
-    Bid: Double
-)
-
-case class FirstPartyCookieScoringResultRecord(
-    TDID: String,
-    AdvertiserId: String,
-    TargetedBids: Seq[TargetedBidRecord],
-    Datacenters: Seq[Int],
-    IsTestId: Boolean
-)
-
-case class FirstPartyCookieScoringResultDataSet() extends DatePartitionedS3DataSet[FirstPartyCookieScoringResultRecord](
-  dataSetType = GeneratedDataSet,
-  s3RootPath = S3Roots.IDENTITY_ROOT,
-  rootFolderPath = "models/firstpartycookiescoring/fpcs/v=1",
-  schemaPolicy = MergeAllFilesSchema
-)
-
-case class PerfCompRecord(
-    AdvertiserId: String,
-    CampaignId: String,
-    AdGroupId: String,
-    TestImpressions: Long,
-    TestSpend: Double,
-    TestConversions: Long,
-    TestCPA: Double,
-    ControlImpressions: Long,
-    ControlSpend: Double,
-    ControlConversions: Long,
-    ControlCPA: Double,
-    Improvement: Double,
-    Date: Long
-)
-
-case class PerfCompDataSet() extends DatePartitionedS3DataSet[PerfCompRecord](
-  dataSetType = GeneratedDataSet,
-  s3RootPath = S3Roots.IDENTITY_ROOT,
-  rootFolderPath = "models/firstpartycookiescoring/perfquery/v=1"
-)
+  def loadEventTrackerData(rangeStart: LocalDate, rangeEnd: LocalDate) = {
+    EventTrackerVerticaLoadDataSetV4(defaultCloudProvider)
+      // todo: adjust end date to include current hour if we decide to run the job more often
+      .readRange(rangeStart.atStartOfDay(), rangeEnd.atStartOfDay())
+      .filter('tdid =!= "00000000-0000-0000-0000-000000000000")
+  }
+}
